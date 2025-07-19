@@ -39,15 +39,18 @@ public class ProjectAnalyzer
     }
 
     /// <summary>
-    /// 出力ディレクトリを準備します。ディレクトリが既に存在する場合は、一度削除してから再作成し、クリーンな状態を保証します。
-    /// Prepares the output directory. If the directory already exists, it is deleted and then recreated to ensure a clean state.
+    /// 出力ディレクトリを準備します。
+    /// Prepares the output directory.
     /// </summary>
     private void PrepareOutputDirectory()
     {
-        if (Directory.Exists(_settings.OutputPath))
-        {
-            Directory.Delete(_settings.OutputPath, true);
-        }
+        // ディレクトリのクリーンは意図しない削除をする可能性があるため廃止。
+        // Directory clean has been deprecated as it could cause unintended deletions.
+
+        //if (Directory.Exists(_settings.OutputPath))
+        //{
+        //    Directory.Delete(_settings.OutputPath, true);
+        //}
         Directory.CreateDirectory(_settings.OutputPath);
     }
 }
