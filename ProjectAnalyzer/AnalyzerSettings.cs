@@ -1,4 +1,8 @@
-﻿public class AnalyzerSettings
+﻿/// <summary>
+/// プロジェクト分析のための設定を保持するクラスです。
+/// A class that holds settings for project analysis.
+/// </summary>
+public class AnalyzerSettings
 {
     public string ProjectPath { get; }
     public string OutputPath { get; }

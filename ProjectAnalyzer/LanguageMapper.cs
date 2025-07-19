@@ -1,8 +1,9 @@
-﻿public static class LanguageMapper
+﻿/// <summary>
+/// ファイル拡張子とMarkdownの言語識別子をマッピングするクラスです。
+/// A class that maps file extensions to Markdown language identifiers.
+/// </summary>
+public static class LanguageMapper
 {
-    /// <summary>
-    /// ファイルの拡張子からMarkdownコードブロック用の言語識別子を返します。
-    /// </summary>
     public static string GetLanguage(string extension)
     {
         return extension.ToLowerInvariant() switch
