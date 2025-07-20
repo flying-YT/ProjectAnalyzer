@@ -1,4 +1,4 @@
-﻿﻿using System.Linq;
+﻿using System.Linq;
 using System.Text;
 
 /// <summary>
@@ -84,6 +84,16 @@ public class FileContentGenerator
         sb.AppendLine();
         sb.AppendLine($"**Relative Path:** `{relativePath}`");
         sb.AppendLine();
+
+        // 人間が閲覧しやすいように、シンタックスハイライト付きのコードブロックを<details>タグで折りたたんで表示します。
+        sb.AppendLine($"**File Content:**");
+        sb.AppendLine("<details>");
+        sb.AppendLine("<summary>View with syntax highlighting</summary>");
+        sb.AppendLine();
+        sb.AppendLine(content);
+        sb.AppendLine("</details>");
+        sb.AppendLine();
+
         sb.AppendLine($"```{language}");
         sb.AppendLine(content);
         sb.AppendLine("```");
