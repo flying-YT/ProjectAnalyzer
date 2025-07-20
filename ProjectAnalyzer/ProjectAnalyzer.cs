@@ -34,8 +34,10 @@ public class ProjectAnalyzer
         Console.WriteLine("   -> Success: 00_ProjectTree.md\n");
 
         Console.WriteLine("📄 Generating file contents...");
-        _fileContentGenerator.Generate();
-        Console.WriteLine("   -> Success: All files have been processed.\n");
+        string allFilesContent = _fileContentGenerator.Generate();
+        string outputFilePath = Path.Combine(_settings.OutputPath, "01_ProjectContext.md");
+        File.WriteAllText(outputFilePath, allFilesContent);
+        Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}\n");
     }
 
     /// <summary>

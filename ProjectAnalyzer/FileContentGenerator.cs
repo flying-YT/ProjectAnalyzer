@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿﻿using System.Linq;
+using System.Text;
 
 /// <summary>
 /// プロジェクト内の各ファイルの内容をMarkdown形式で生成するクラスです。
@@ -19,12 +20,18 @@ public class FileContentGenerator
     }
 
     /// <summary>
-    /// プロジェクト内のすべてのファイルに対するMarkdownファイルの生成を開始します。
-    /// Starts the generation of Markdown files for all files in the project.
+    /// プロジェクト内のすべてのファイルに対する単一のMarkdownコンテンツを生成します。
+    /// Generates a single Markdown content for all files in the project.
     /// </summary>
-    public void Generate()
+    /// <returns>生成されたMarkdownコンテンツ文字列。/ The generated Markdown content string.</returns>
+    public string Generate()
     {
-        GenerateRecursive(_settings.ProjectPath);
+        var sb = new StringBuilder();
+        sb.AppendLine("# 📄 Project Context");
+        sb.AppendLine();
+
+        GenerateRecursive(_settings.ProjectPath, sb);
+        return sb.ToString();
     }
 
     /// <summary>
@@ -32,16 +39,17 @@ public class FileContentGenerator
     /// Recursively explores directories and files from the specified path and calls the Markdown generation process for each file.
     /// </summary>
     /// <param name="currentPath">探索を開始する現在のディレクトリパス。/ The current directory path to start exploration from.</param>
-    private void GenerateRecursive(string currentPath)
+    /// <param name="sb">Markdownコンテンツを構築するためのStringBuilder。/ The StringBuilder to build the Markdown content.</param>
+    private void GenerateRecursive(string currentPath, StringBuilder sb)
     {
         // Files
-        foreach (var file in Directory.GetFiles(currentPath))
+        foreach (var file in Directory.GetFiles(currentPath).OrderBy(f => f))
         {
             if (_settings.IgnoreList.Contains(Path.GetFileName(file))) continue;
 
             try
             {
-                CreateMarkdownForFile(file);
+                AppendMarkdownForFile(file, sb);
             }
             catch (Exception ex)
             {
@@ -50,37 +58,35 @@ public class FileContentGenerator
         }
 
         // Directories
-        foreach (var dir in Directory.GetDirectories(currentPath))
+        foreach (var dir in Directory.GetDirectories(currentPath).OrderBy(d => d))
         {
             if (_settings.IgnoreList.Contains(Path.GetFileName(dir))) continue;
-            GenerateRecursive(dir);
+            GenerateRecursive(dir, sb);
         }
     }
 
     /// <summary>
-    /// 単一のソースファイルからMarkdownファイルを生成します。
-    /// Generates a Markdown file from a single source file.
+    /// 単一のソースファイルからMarkdownコンテンツを生成し、StringBuilderに追加します。
+    /// Generates Markdown content from a single source file and appends it to the StringBuilder.
     /// </summary>
     /// <param name="filePath">処理対象のソースファイルのパス。/ The path of the source file to process.</param>
-    private void CreateMarkdownForFile(string filePath)
+    /// <param name="sb">Markdownコンテンツを構築するためのStringBuilder。/ The StringBuilder to build the Markdown content.</param>
+    private void AppendMarkdownForFile(string filePath, StringBuilder sb)
     {
         string relativePath = Path.GetRelativePath(_settings.ProjectPath, filePath);
-        string outputFilePath = Path.Combine(_settings.OutputPath, relativePath + ".md");
-
-        Directory.CreateDirectory(Path.GetDirectoryName(outputFilePath));
 
         string content = File.ReadAllText(filePath);
         string language = LanguageMapper.GetLanguage(Path.GetExtension(filePath));
 
-        var mdContent = new StringBuilder();
-        mdContent.AppendLine($"# {Path.GetFileName(filePath)}");
-        mdContent.AppendLine();
-        mdContent.AppendLine($"**Relative Path:** `{relativePath}`");
-        mdContent.AppendLine();
-        mdContent.AppendLine($"```{language}");
-        mdContent.AppendLine(content);
-        mdContent.AppendLine("```");
-
-        File.WriteAllText(outputFilePath, mdContent.ToString());
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine($"## {Path.GetFileName(filePath)}");
+        sb.AppendLine();
+        sb.AppendLine($"**Relative Path:** `{relativePath}`");
+        sb.AppendLine();
+        sb.AppendLine($"```{language}");
+        sb.AppendLine(content);
+        sb.AppendLine("```");
+        sb.AppendLine();
     }
 }
