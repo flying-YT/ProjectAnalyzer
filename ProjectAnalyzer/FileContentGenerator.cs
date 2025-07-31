@@ -8,6 +8,7 @@ using System.Text;
 public class FileContentGenerator
 {
     private readonly AnalyzerSettings _settings;
+    private const long MaxFileSize = 4 * 1024 * 1024; // 8MB
 
     /// <summary>
     /// FileContentGenerator クラスの新しいインスタンスを初期化します。
@@ -20,83 +21,110 @@ public class FileContentGenerator
     }
 
     /// <summary>
-    /// プロジェクト内のすべてのファイルに対する単一のMarkdownコンテンツを生成します。
-    /// Generates a single Markdown content for all files in the project.
+    /// プロジェクト内のすべてのファイルに対するMarkdownコンテンツのリストを生成します。
+    /// Generates a list of Markdown content for all files in the project.
     /// </summary>
-    /// <returns>生成されたMarkdownコンテンツ文字列。/ The generated Markdown content string.</returns>
-    public string Generate()
+    /// <returns>生成されたMarkdownコンテンツ文字列のリスト。/ The list of generated Markdown content strings.</returns>
+    public List<string> Generate()
     {
+        var fileContents = new List<string>();
         var sb = new StringBuilder();
         sb.AppendLine("# 📄 Project Context");
         sb.AppendLine();
 
-        GenerateRecursive(_settings.ProjectPath, sb);
-        return sb.ToString();
+        long currentSize = 0;
+        var allFiles = GetAllFiles(_settings.ProjectPath);
+
+        foreach (var file in allFiles)
+        {
+            string fileMarkdown = GenerateMarkdownForFile(file);
+            long fileSize = Encoding.UTF8.GetByteCount(fileMarkdown);
+
+            if (currentSize + fileSize > MaxFileSize && sb.Length > 0)
+            {
+                fileContents.Add(sb.ToString());
+                sb.Clear();
+                sb.AppendLine("# 📄 Project Context (続き)");
+                sb.AppendLine();
+                currentSize = 0;
+            }
+
+            sb.Append(fileMarkdown);
+            currentSize += fileSize;
+        }
+
+        if (sb.Length > 0)
+        {
+            fileContents.Add(sb.ToString());
+        }
+
+        return fileContents;
     }
 
-    /// <summary>
-    /// 指定されたパスから再帰的にディレクトリとファイルを探索し、各ファイルに対してMarkdown生成処理を呼び出します。
-    /// Recursively explores directories and files from the specified path and calls the Markdown generation process for each file.
-    /// </summary>
-    /// <param name="currentPath">探索を開始する現在のディレクトリパス。/ The current directory path to start exploration from.</param>
-    /// <param name="sb">Markdownコンテンツを構築するためのStringBuilder。/ The StringBuilder to build the Markdown content.</param>
-    private void GenerateRecursive(string currentPath, StringBuilder sb)
+    private List<string> GetAllFiles(string path)
     {
-        // Files
-        foreach (var file in Directory.GetFiles(currentPath).OrderBy(f => f))
-        {
-            if (_settings.IgnoreList.Contains(Path.GetFileName(file))) continue;
+        var files = new List<string>();
 
-            try
+        foreach (var file in Directory.GetFiles(path).OrderBy(f => f))
+        {
+            if (!_settings.IgnoreList.Contains(Path.GetFileName(file)))
             {
-                AppendMarkdownForFile(file, sb);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"   [Warning] Could not process file '{Path.GetFileName(file)}': {ex.Message}");
+                files.Add(file);
             }
         }
 
-        // Directories
-        foreach (var dir in Directory.GetDirectories(currentPath).OrderBy(d => d))
+        foreach (var dir in Directory.GetDirectories(path).OrderBy(d => d))
         {
-            if (_settings.IgnoreList.Contains(Path.GetFileName(dir))) continue;
-            GenerateRecursive(dir, sb);
+            if (!_settings.IgnoreList.Contains(Path.GetFileName(dir)))
+            {
+                files.AddRange(GetAllFiles(dir));
+            }
         }
+
+        return files;
     }
 
     /// <summary>
-    /// 単一のソースファイルからMarkdownコンテンツを生成し、StringBuilderに追加します。
-    /// Generates Markdown content from a single source file and appends it to the StringBuilder.
+    /// 単一のソースファイルからMarkdownコンテンツを生成します。
+    /// Generates Markdown content from a single source file.
     /// </summary>
     /// <param name="filePath">処理対象のソースファイルのパス。/ The path of the source file to process.</param>
-    /// <param name="sb">Markdownコンテンツを構築するためのStringBuilder。/ The StringBuilder to build the Markdown content.</param>
-    private void AppendMarkdownForFile(string filePath, StringBuilder sb)
+    /// <returns>生成されたMarkdownコンテンツ。/ The generated Markdown content.</returns>
+    private string GenerateMarkdownForFile(string filePath)
     {
-        string relativePath = Path.GetRelativePath(_settings.ProjectPath, filePath);
+        try
+        {
+            var sb = new StringBuilder();
+            string relativePath = Path.GetRelativePath(_settings.ProjectPath, filePath);
+            string content = File.ReadAllText(filePath);
+            string language = LanguageMapper.GetLanguage(Path.GetExtension(filePath));
 
-        string content = File.ReadAllText(filePath);
-        string language = LanguageMapper.GetLanguage(Path.GetExtension(filePath));
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine($"## {Path.GetFileName(filePath)}");
+            sb.AppendLine();
+            sb.AppendLine($"**Relative Path:** `{relativePath}`");
+            sb.AppendLine();
 
-        sb.AppendLine("---");
-        sb.AppendLine();
-        sb.AppendLine($"## {Path.GetFileName(filePath)}");
-        sb.AppendLine();
-        sb.AppendLine($"**Relative Path:** `{relativePath}`");
-        sb.AppendLine();
+            sb.AppendLine($"**File Content:**");
+            sb.AppendLine("<details>");
+            sb.AppendLine("<summary>View with syntax highlighting</summary>");
+            sb.AppendLine();
+            sb.AppendLine(content);
+            sb.AppendLine("</details>");
+            sb.AppendLine();
 
-        // 人間が閲覧しやすいように、シンタックスハイライト付きのコードブロックを<details>タグで折りたたんで表示します。
-        sb.AppendLine($"**File Content:**");
-        sb.AppendLine("<details>");
-        sb.AppendLine("<summary>View with syntax highlighting</summary>");
-        sb.AppendLine();
-        sb.AppendLine(content);
-        sb.AppendLine("</details>");
-        sb.AppendLine();
+            sb.AppendLine($"```{language}");
+            sb.AppendLine(content);
+            sb.AppendLine("```");
+            sb.AppendLine();
 
-        sb.AppendLine($"```{language}");
-        sb.AppendLine(content);
-        sb.AppendLine("```");
-        sb.AppendLine();
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   [Warning] Could not process file '{Path.GetFileName(filePath)}': {ex.Message}");
+            return string.Empty;
+        }
     }
 }

@@ -34,10 +34,24 @@ public class ProjectAnalyzer
         Console.WriteLine("   -> Success: 00_ProjectTree.md\n");
 
         Console.WriteLine("📄 Generating file contents...");
-        string allFilesContent = _fileContentGenerator.Generate();
-        string outputFilePath = Path.Combine(_settings.OutputPath, "01_ProjectContext.md");
-        File.WriteAllText(outputFilePath, allFilesContent);
-        Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}\n");
+        var allFilesContents = _fileContentGenerator.Generate();
+
+        if (allFilesContents.Count == 1)
+        {
+            string outputFilePath = Path.Combine(_settings.OutputPath, "01_ProjectContext.md");
+            File.WriteAllText(outputFilePath, allFilesContents[0]);
+            Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}\n");
+        }
+        else
+        {
+            for (int i = 0; i < allFilesContents.Count; i++)
+            {
+                string outputFilePath = Path.Combine(_settings.OutputPath, $"01_ProjectContext_{i + 1}.md");
+                File.WriteAllText(outputFilePath, allFilesContents[i]);
+                Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}");
+            }
+            Console.WriteLine();
+        }
     }
 
     /// <summary>
