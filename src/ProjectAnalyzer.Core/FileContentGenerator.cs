@@ -1,4 +1,8 @@
-﻿using System.Linq;
+namespace ProjectAnalyzer.Core;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 
 /// <summary>
@@ -8,7 +12,7 @@ using System.Text;
 public class FileContentGenerator
 {
     private readonly AnalyzerSettings _settings;
-    private const long MaxFileSize = 4 * 1024 * 1024; // 8MB
+    private const long MaxFileSize = 4 * 1024 * 1024; // 4MB
 
     /// <summary>
     /// FileContentGenerator クラスの新しいインスタンスを初期化します。
@@ -114,9 +118,15 @@ public class FileContentGenerator
             sb.AppendLine("</details>");
             sb.AppendLine();
 
-            sb.AppendLine($"```{language}");
+            if (!_settings.OmitCodeBlockTicks)
+            {
+                sb.AppendLine($"```{language}");
+            }
             sb.AppendLine(content);
-            sb.AppendLine("```");
+            if (!_settings.OmitCodeBlockTicks)
+            {
+                sb.AppendLine("```");
+            }
             sb.AppendLine();
 
             return sb.ToString();

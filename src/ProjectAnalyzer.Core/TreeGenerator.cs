@@ -1,5 +1,6 @@
-﻿using System.Text;
+using System.Text;
 
+namespace ProjectAnalyzer.Core;
 /// <summary>
 /// プロジェクトのフォルダ構造をツリー形式で表現する文字列を生成するクラスです。
 /// A class that generates a string representing the project's folder structure in a tree format.

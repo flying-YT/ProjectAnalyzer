@@ -1,4 +1,7 @@
-﻿// このファイルはアプリケーションのエントリーポイントです。
+﻿using System;
+using ProjectAnalyzer.Core;
+
+// このファイルはアプリケーションのエントリーポイントです。
 // This file is the application's entry point.
 // コマンドライン引数を解釈し、分析処理を初期化して実行します。
 // It parses command-line arguments, initializes, and runs the analysis process.
@@ -23,8 +26,8 @@ try
 
     // 2. 分析の実行
     // 2. Run analysis
-    var analyzer = new ProjectAnalyzer(settings);
-    analyzer.Analyze();
+    var analyzer = new Analyzer(settings);
+    AnalyzerResult result = analyzer.Analyze();
 
     Console.WriteLine("✅ Analysis complete!");
 }
