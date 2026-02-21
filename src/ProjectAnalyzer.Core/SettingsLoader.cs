@@ -1,4 +1,7 @@
 namespace ProjectAnalyzer.Core;
+using System.Collections.Generic;
+using System.IO;
+
 /// <summary>
 /// アナライザーの設定を読み込むクラスです。
 /// A class for loading analyzer settings.
@@ -15,8 +18,10 @@ public static class SettingsLoader
     /// </summary>
     /// <param name="projectPath">分析対象のプロジェクトのパス。/ The path to the project to be analyzed.</param>
     /// <param name="outputPath">分析結果を出力するディレクトリのパス。/ The path to the directory where the analysis results will be output.</param>
+    /// <param name="outputToFile">ファイル出力を行うかどうかのフラグ。/ A flag indicating whether to perform file output.</param>
+    /// <param name="omitCodeBlockTicks">Markdownのコードブロック(```)を省略するかどうかのフラグ。/ A flag indicating whether to omit Markdown code blocks (```).</param>
     /// <returns>読み込まれた設定情報を含む `AnalyzerSettings` インスタンス。/ An `AnalyzerSettings` instance containing the loaded configuration.</returns>
-    public static AnalyzerSettings Load(string projectPath, string outputPath)
+    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false)
     {
         var ignoreList = new HashSet<string>();
 
@@ -26,7 +31,11 @@ public static class SettingsLoader
         ignoreList.Add("obj");
         ignoreList.Add(".vs");
         ignoreList.Add(".git");
-        ignoreList.Add(Path.GetFileName(Path.GetFullPath(outputPath))); // 出力フォルダ自体 / The output folder itself
+        
+        if (!string.IsNullOrWhiteSpace(outputPath))
+        {
+            ignoreList.Add(Path.GetFileName(Path.GetFullPath(outputPath))); // 出力フォルダ自体 / The output folder itself
+        }
         ignoreList.Add(IgnoreFileName);
 
         // 設定ファイルから読み込み
@@ -44,6 +53,6 @@ public static class SettingsLoader
             }
         }
 
-        return new AnalyzerSettings(projectPath, outputPath, ignoreList);
+        return new AnalyzerSettings(projectPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks);
     }
 }

@@ -1,4 +1,7 @@
 namespace ProjectAnalyzer.Core;
+using System;
+using System.IO;
+
 /// <summary>
 /// プロジェクトの分析を統括するメインクラスです。
 /// The main class that orchestrates the project analysis.
@@ -25,34 +28,60 @@ public class Analyzer
     /// プロジェクトの分析処理を開始します。出力ディレクトリの準備、フォルダツリーの生成、各ファイルの内容生成を順に実行します。
     /// Starts the project analysis process. It prepares the output directory, generates the folder tree, and then generates the content for each file.
     /// </summary>
-    public void Analyze()
+    /// <returns>生成されたテキストデータを保持するオブジェクト / An object holding the generated text data.</returns>
+    public AnalyzerResult Analyze()
     {
-        PrepareOutputDirectory();
+        var result = new AnalyzerResult();
+
+        if (_settings.OutputToFile)
+        {
+            PrepareOutputDirectory();
+        }
 
         Console.WriteLine("🌳 Generating folder tree...");
         string tree = _treeGenerator.Generate();
-        File.WriteAllText(Path.Combine(_settings.OutputPath, "00_ProjectTree.md"), $"# 🌳 Project Folder Tree\n\n```\n{tree}\n```");
-        Console.WriteLine("   -> Success: 00_ProjectTree.md\n");
+        string treeContent = $"# 🌳 Project Folder Tree\n\n```\n{tree}\n```";
+        result.ProjectTree = treeContent;
 
-        Console.WriteLine("📄 Generating file contents...");
-        var allFilesContents = _fileContentGenerator.Generate();
-
-        if (allFilesContents.Count == 1)
+        if (_settings.OutputToFile)
         {
-            string outputFilePath = Path.Combine(_settings.OutputPath, "01_ProjectContext.md");
-            File.WriteAllText(outputFilePath, allFilesContents[0]);
-            Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}\n");
+            File.WriteAllText(Path.Combine(_settings.OutputPath, "00_ProjectTree.md"), treeContent);
+            Console.WriteLine("   -> Success: 00_ProjectTree.md\n");
         }
         else
         {
-            for (int i = 0; i < allFilesContents.Count; i++)
-            {
-                string outputFilePath = Path.Combine(_settings.OutputPath, $"01_ProjectContext_{i + 1}.md");
-                File.WriteAllText(outputFilePath, allFilesContents[i]);
-                Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}");
-            }
-            Console.WriteLine();
+            Console.WriteLine("   -> Skipped file output (kept in memory)\n");
         }
+
+        Console.WriteLine("📄 Generating file contents...");
+        var allFilesContents = _fileContentGenerator.Generate();
+        result.ProjectContexts = allFilesContents;
+
+        if (_settings.OutputToFile)
+        {
+            if (allFilesContents.Count == 1)
+            {
+                string outputFilePath = Path.Combine(_settings.OutputPath, "01_ProjectContext.md");
+                File.WriteAllText(outputFilePath, allFilesContents[0]);
+                Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}\n");
+            }
+            else
+            {
+                for (int i = 0; i < allFilesContents.Count; i++)
+                {
+                    string outputFilePath = Path.Combine(_settings.OutputPath, $"01_ProjectContext_{i + 1}.md");
+                    File.WriteAllText(outputFilePath, allFilesContents[i]);
+                    Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}");
+                }
+                Console.WriteLine();
+            }
+        }
+        else
+        {
+            Console.WriteLine($"   -> Skipped file output (kept {allFilesContents.Count} contexts in memory)\n");
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -61,13 +90,7 @@ public class Analyzer
     /// </summary>
     private void PrepareOutputDirectory()
     {
-        // ディレクトリのクリーンは意図しない削除をする可能性があるため廃止。
-        // Directory clean has been deprecated as it could cause unintended deletions.
-
-        //if (Directory.Exists(_settings.OutputPath))
-        //{
-        //    Directory.Delete(_settings.OutputPath, true);
-        //}
+        if (string.IsNullOrWhiteSpace(_settings.OutputPath)) return;
         Directory.CreateDirectory(_settings.OutputPath);
     }
 }
