@@ -1,4 +1,5 @@
-﻿using System.Linq;
+namespace ProjectAnalyzer.Core;
+using System.Linq;
 using System.Text;
 
 /// <summary>

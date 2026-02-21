@@ -1,4 +1,5 @@
-﻿// このファイルはアプリケーションのエントリーポイントです。
+﻿using ProjectAnalyzer.Core;
+// このファイルはアプリケーションのエントリーポイントです。
 // This file is the application's entry point.
 // コマンドライン引数を解釈し、分析処理を初期化して実行します。
 // It parses command-line arguments, initializes, and runs the analysis process.

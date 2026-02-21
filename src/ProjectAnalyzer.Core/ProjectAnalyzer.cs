@@ -1,4 +1,5 @@
-﻿/// <summary>
+namespace ProjectAnalyzer.Core;
+/// <summary>
 /// プロジェクトの分析を統括するメインクラスです。
 /// The main class that orchestrates the project analysis.
 /// </summary>

@@ -1,4 +1,5 @@
-﻿/// <summary>
+namespace ProjectAnalyzer.Core;
+/// <summary>
 /// プロジェクト分析のための設定を保持するクラスです。
 /// A class that holds settings for project analysis.
 /// </summary>

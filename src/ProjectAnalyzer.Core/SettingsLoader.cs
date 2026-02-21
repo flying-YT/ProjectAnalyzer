@@ -1,4 +1,5 @@
-﻿/// <summary>
+namespace ProjectAnalyzer.Core;
+/// <summary>
 /// アナライザーの設定を読み込むクラスです。
 /// A class for loading analyzer settings.
 /// </summary>

@@ -1,4 +1,5 @@
-﻿/// <summary>
+namespace ProjectAnalyzer.Core;
+/// <summary>
 /// ファイル拡張子とMarkdownの言語識別子をマッピングするクラスです。
 /// A class that maps file extensions to Markdown language identifiers.
 /// </summary>
