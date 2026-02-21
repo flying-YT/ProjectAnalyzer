@@ -24,7 +24,7 @@ try
 
     // 2. 分析の実行
     // 2. Run analysis
-    var analyzer = new ProjectAnalyzer(settings);
+    var analyzer = new Analyzer(settings);
     analyzer.Analyze();
 
     Console.WriteLine("✅ Analysis complete!");

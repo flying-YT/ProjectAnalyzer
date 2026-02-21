@@ -3,7 +3,7 @@ namespace ProjectAnalyzer.Core;
 /// プロジェクトの分析を統括するメインクラスです。
 /// The main class that orchestrates the project analysis.
 /// </summary>
-public class ProjectAnalyzer
+public class Analyzer
 {
     private readonly AnalyzerSettings _settings;
     private readonly TreeGenerator _treeGenerator;
@@ -14,7 +14,7 @@ public class ProjectAnalyzer
     /// Initializes a new instance of the ProjectAnalyzer class.
     /// </summary>
     /// <param name="settings">分析に使用する設定。/ The settings to use for the analysis.</param>
-    public ProjectAnalyzer(AnalyzerSettings settings)
+    public Analyzer(AnalyzerSettings settings)
     {
         _settings = settings;
         _treeGenerator = new TreeGenerator(settings);
