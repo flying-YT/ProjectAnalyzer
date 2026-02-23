@@ -1,10 +1,12 @@
-namespace ProjectAnalyzer.Core;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using ProjectAnalyzer.Core.Models;
+using ProjectAnalyzer.Core.Utils;
 
+namespace ProjectAnalyzer.Core.Generators;
 /// <summary>
 /// プロジェクト内の各ファイルの内容をMarkdown形式で生成するクラスです。
 /// A class that generates the content of each file in the project in Markdown format.

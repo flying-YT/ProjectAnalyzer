@@ -1,7 +1,9 @@
-namespace ProjectAnalyzer.Core;
 using System;
 using System.IO;
+using ProjectAnalyzer.Core.Models;
+using ProjectAnalyzer.Core.Generators;
 
+namespace ProjectAnalyzer.Core;
 /// <summary>
 /// プロジェクトの分析を統括するメインクラスです。
 /// The main class that orchestrates the project analysis.

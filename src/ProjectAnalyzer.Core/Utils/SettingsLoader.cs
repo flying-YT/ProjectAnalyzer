@@ -1,10 +1,11 @@
-namespace ProjectAnalyzer.Core;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using ProjectAnalyzer.Core.Models;
 
+namespace ProjectAnalyzer.Core.Utils;
 /// <summary>
 /// アナライザーの設定を読み込むクラスです。
 /// A class for loading analyzer settings.

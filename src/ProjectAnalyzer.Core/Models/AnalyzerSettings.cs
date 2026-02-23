@@ -1,7 +1,7 @@
-namespace ProjectAnalyzer.Core;
 using System.Collections.Generic;
 using System.IO;
 
+namespace ProjectAnalyzer.Core.Models;
 /// <summary>
 /// プロジェクト分析のための設定を保持するクラスです。
 /// A class that holds settings for project analysis.
