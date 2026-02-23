@@ -1,12 +1,14 @@
-namespace ProjectAnalyzer.Core;
 using System;
 using System.IO;
+using ProjectAnalyzer.Core.Models;
+using ProjectAnalyzer.Core.Generators;
 
+namespace ProjectAnalyzer.Core;
 /// <summary>
 /// プロジェクトの分析を統括するメインクラスです。
 /// The main class that orchestrates the project analysis.
 /// </summary>
-public class Analyzer
+public class Analyzer: IDisposable
 {
     private readonly AnalyzerSettings _settings;
     private readonly TreeGenerator _treeGenerator;
@@ -92,5 +94,31 @@ public class Analyzer
     {
         if (string.IsNullOrWhiteSpace(_settings.OutputPath)) return;
         Directory.CreateDirectory(_settings.OutputPath);
+    }
+    
+    public void Dispose()
+    {
+        // 一時フォルダが設定されていて、存在する場合のみ削除を実行
+        if (!string.IsNullOrEmpty(_settings.TempClonePath) && Directory.Exists(_settings.TempClonePath))
+        {
+            try
+            {
+                RemoveReadOnlyAttributes(new DirectoryInfo(_settings.TempClonePath));
+                Directory.Delete(_settings.TempClonePath, true);
+                Console.WriteLine("🧹 Cleaned up temporary repository files.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ Failed to clean up temporary directory: {ex.Message}");
+            }
+        }
+    }
+
+    private void RemoveReadOnlyAttributes(DirectoryInfo directory)
+    {
+        foreach (var file in directory.GetFiles("*", SearchOption.AllDirectories))
+        {
+            file.Attributes &= ~FileAttributes.ReadOnly;
+        }
     }
 }

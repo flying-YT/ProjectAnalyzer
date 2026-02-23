@@ -1,5 +1,7 @@
 ﻿using System;
 using ProjectAnalyzer.Core;
+using ProjectAnalyzer.Core.Models;
+using ProjectAnalyzer.Core.Utils;
 
 // このファイルはアプリケーションのエントリーポイントです。
 // This file is the application's entry point.
@@ -26,7 +28,7 @@ try
 
     // 2. 分析の実行
     // 2. Run analysis
-    var analyzer = new Analyzer(settings);
+    using var analyzer = new Analyzer(settings);
     AnalyzerResult result = analyzer.Analyze();
 
     Console.WriteLine("✅ Analysis complete!");

@@ -1,6 +1,6 @@
-namespace ProjectAnalyzer.Core;
 using System.Collections.Generic;
 
+namespace ProjectAnalyzer.Core.Models;
 /// <summary>
 /// プロジェクトの分析結果を保持するクラスです。
 /// A class that holds the analysis results of the project.

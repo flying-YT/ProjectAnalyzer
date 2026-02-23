@@ -1,6 +1,8 @@
 using System.Text;
+using ProjectAnalyzer.Core.Models;
 
-namespace ProjectAnalyzer.Core;
+namespace ProjectAnalyzer.Core.Generators;
+
 /// <summary>
 /// プロジェクトのフォルダ構造をツリー形式で表現する文字列を生成するクラスです。
 /// A class that generates a string representing the project's folder structure in a tree format.
@@ -29,7 +31,10 @@ public class TreeGenerator
         var sb = new StringBuilder();
         var rootDirInfo = new DirectoryInfo(_settings.ProjectPath);
         sb.AppendLine(rootDirInfo.Name);
-        GenerateRecursive(rootDirInfo, "", sb, true);
+        
+        // 修正: 第4引数(isLast)は不要になったため削除
+        GenerateRecursive(rootDirInfo, "", sb);
+        
         return sb.ToString();
     }
 
@@ -40,8 +45,7 @@ public class TreeGenerator
     /// <param name="directory">処理対象のディレクトリ。/ The directory to process.</param>
     /// <param name="indent">現在のインデント文字列。/ The current indentation string.</param>
     /// <param name="sb">ツリー文字列を構築するための StringBuilder。/ The StringBuilder to build the tree string.</param>
-    /// <param name="isParentLast">親ディレクトリが、その兄弟の中で最後の要素であったかどうかを示すフラグ。/ A flag indicating whether the parent directory was the last element among its siblings.</param>
-    private void GenerateRecursive(DirectoryInfo directory, string indent, StringBuilder sb, bool isLast)
+    private void GenerateRecursive(DirectoryInfo directory, string indent, StringBuilder sb)
     {
         var subDirectories = directory.GetDirectories()
                                       .Where(d => !_settings.IgnoreList.Contains(d.Name))
@@ -52,21 +56,28 @@ public class TreeGenerator
                              .OrderBy(f => f.Name)
                              .ToList();
 
-        string newIndent = indent + (isLast ? "    " : "│   ");
-
         for (int i = 0; i < subDirectories.Count; i++)
         {
             var subDir = subDirectories[i];
             bool isLastEntry = (i == subDirectories.Count - 1) && (files.Count == 0);
-            sb.AppendLine($"{indent}└── {(isLastEntry ? "└── " : "├── ")}{subDir.Name}");
-            GenerateRecursive(subDir, newIndent, sb, isLastEntry);
+            
+            // 1. 現在のディレクトリの枝を描画
+            sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{subDir.Name}");
+            
+            // 2. 次の階層へ渡すインデントを作成（自分が最後なら空白、続くなら縦線）
+            string nextIndent = indent + (isLastEntry ? "    " : "│   ");
+            
+            // 3. 子要素の再帰処理
+            GenerateRecursive(subDir, nextIndent, sb);
         }
 
         for (int i = 0; i < files.Count; i++)
         {
             var file = files[i];
             bool isLastEntry = (i == files.Count - 1);
-            sb.AppendLine($"{indent}└── {(isLastEntry ? "└── " : "├── ")}{file.Name}");
+            
+            // 1. 現在のファイルの枝を描画
+            sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{file.Name}");
         }
     }
 }
