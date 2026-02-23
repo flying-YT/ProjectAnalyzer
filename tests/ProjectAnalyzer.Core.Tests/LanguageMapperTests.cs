@@ -1,4 +1,5 @@
 using ProjectAnalyzer.Core;
+using ProjectAnalyzer.Core.Utils;
 using Xunit;
 
 namespace ProjectAnalyzer.Core.Tests;

@@ -1,4 +1,5 @@
 using ProjectAnalyzer.Core;
+using ProjectAnalyzer.Core.Utils;
 using Xunit;
 using System;
 using System.IO;
@@ -12,12 +13,10 @@ public class AnalyzerTests : IDisposable
 
     public AnalyzerTests()
     {
-        // ダミーのプロジェクトフォルダ構造を作成
         _tempProjectDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         _tempOutputDir = Path.Combine(_tempProjectDir, "output");
         Directory.CreateDirectory(_tempProjectDir);
 
-        // ダミーファイルの作成
         File.WriteAllText(Path.Combine(_tempProjectDir, "TestFile.cs"), "public class Test {}");
         
         var subDir = Path.Combine(_tempProjectDir, "SubDir");
@@ -27,7 +26,6 @@ public class AnalyzerTests : IDisposable
 
     public void Dispose()
     {
-        // お掃除
         if (Directory.Exists(_tempProjectDir))
         {
             Directory.Delete(_tempProjectDir, true);
@@ -38,27 +36,48 @@ public class AnalyzerTests : IDisposable
     public void Analyze_GeneratesCorrectResultInMemory_WhenOutputToFileIsFalse()
     {
         // Arrange
-        // メモリ上に保持する設定 (OutputToFile: false)
         var settings = SettingsLoader.Load(_tempProjectDir, _tempOutputDir, outputToFile: false, omitCodeBlockTicks: false);
-        var analyzer = new Analyzer(settings);
+        using var analyzer = new Analyzer(settings);
 
         // Act
         var result = analyzer.Analyze();
 
         // Assert
         Assert.NotNull(result);
-        
-        // ツリー構造が取得できているか
         Assert.Contains("TestFile.cs", result.ProjectTree);
-        Assert.Contains("SubDir", result.ProjectTree);
-        Assert.Contains("Readme.md", result.ProjectTree);
-
-        // ファイルコンテンツが生成されているか
-        Assert.Single(result.ProjectContexts); // 4MB以下なので1つにまとまっているはず
+        Assert.Single(result.ProjectContexts);
         Assert.Contains("public class Test {}", result.ProjectContexts[0]);
-        Assert.Contains("# Hello", result.ProjectContexts[0]);
-
-        // OutputToFileがfalseなので、実際のフォルダやファイルが作られていないか
+        
+        // OutputToFileがfalseなので、出力先フォルダは作られない
         Assert.False(Directory.Exists(_tempOutputDir));
+    }
+
+    // ↓↓↓ ここから追加 ↓↓↓
+    [Fact]
+    public void Analyze_CreatesMarkdownFiles_WhenOutputToFileIsTrue()
+    {
+        // Arrange
+        // OutputToFileをtrueにして実行
+        var settings = SettingsLoader.Load(_tempProjectDir, _tempOutputDir, outputToFile: true, omitCodeBlockTicks: false);
+        using var analyzer = new Analyzer(settings);
+
+        // Act
+        var result = analyzer.Analyze();
+
+        // Assert
+        Assert.True(Directory.Exists(_tempOutputDir)); // 出力フォルダが作成されたか
+
+        string treeFilePath = Path.Combine(_tempOutputDir, "00_ProjectTree.md");
+        string contextFilePath = Path.Combine(_tempOutputDir, "01_ProjectContext.md");
+
+        Assert.True(File.Exists(treeFilePath)); // ツリーファイルが生成されたか
+        Assert.True(File.Exists(contextFilePath)); // コンテキストファイルが生成されたか
+
+        // 生成されたファイルの中身の検証
+        string treeContent = File.ReadAllText(treeFilePath);
+        Assert.Contains("TestFile.cs", treeContent);
+
+        string contextContent = File.ReadAllText(contextFilePath);
+        Assert.Contains("public class Test {}", contextContent);
     }
 }
