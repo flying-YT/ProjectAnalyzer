@@ -2,12 +2,13 @@
 
 ## **概要**
 
-**Project Analyzer** は、指定されたプロジェクトフォルダの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいように、Markdownファイルとして出力する.NET製のコマンドラインツールおよびクラスライブラリです。
+**Project Analyzer** は、指定されたプロジェクトフォルダ**またはGitHubリポジトリ**の構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいように、Markdownファイルとして出力する.NET製のコマンドラインツールおよびクラスライブラリです。
 
 主に**Githubのリポジトリ**や**自作のプロジェクトフォルダ**を**NotebookLM**などのAIツールのソースとして使う際に活用できます。
 
 ## **主な機能**
 
+* **🐙 GitHubリポジトリの直接分析** GitHubのリポジトリURLを指定するだけで、自動的に一時フォルダへクローンして分析を実行できます。手動で `git clone` する手間を省き、リモートのリポジトリを素早くコンテキスト化できます。
 * **📁 フォルダツリーの生成** プロジェクトのフォルダとファイルの階層構造をツリー形式で 00\_ProjectTree.md に出力します。  
 * **📄 統合されたコンテキストの生成** プロジェクト内の全ソースファイルの内容を、シンタックスハイライトと折りたたみ機能付きで Markdownファイル (01\_ProjectContext.md) に集約して出力します。大規模なプロジェクトの場合は自動的に複数ファイルに分割出力されます。  
 * **⚙️ 柔軟な除外設定** .projectanalyzerignore ファイルを使用して、分析から除外したいファイルやフォルダを簡単に指定できます。また、bin obj .git などの一般的なフォルダはデフォルトで除外されます。  
@@ -65,6 +66,12 @@ dist
 
     # パスを指定して実行
     ProjectAnalyzer.Cli.exe "[分析したいプロジェクトのパス]" "[出力先のパス]"
+
+    # GitHubリポジトリを直接分析
+    ProjectAnalyzer.Cli.exe "https://github.com/username/repository.git"
+
+    # プライベートリポジトリの場合 (アクセストークンを含める)
+    ProjectAnalyzer.Cli.exe "https://<YOUR_TOKEN>@github.com/username/repository.git"
     ```
 
 *   **B. ソースコードから実行する場合 (.NET SDK環境 / クロスプラットフォーム)**
@@ -77,6 +84,12 @@ dist
 
     # パスを指定して実行
     dotnet run -- "[分析したいプロジェクトのパス]" "[出力先のパス]"
+
+    # GitHubリポジトリを直接分析
+    dotnet run -- "https://github.com/username/repository.git"
+
+    # プライベートリポジトリの場合 (アクセストークンを含める)
+    dotnet run -- "https://<YOUR_TOKEN>@github.com/username/repository.git"
     ```
 
     **パス指定の実行例:**
@@ -98,7 +111,7 @@ using ProjectAnalyzer.Core;
 var settings = SettingsLoader.Load("C:\\path\\to\\your\\project", "C:\\path\\to\\output");
 
 // 2. 分析処理の実行
-var analyzer = new Analyzer(settings);
+using var analyzer = new Analyzer(settings);
 AnalyzerResult result = analyzer.Analyze(); // ファイル出力と同時に結果オブジェクトも返ります
 ```
 
@@ -118,7 +131,7 @@ var settings = SettingsLoader.Load(
     omitCodeBlockTicks: true
 );
 
-var analyzer = new Analyzer(settings);
+using var analyzer = new Analyzer(settings);
 AnalyzerResult result = analyzer.Analyze();
 
 // 結果をプログラム内で自由に利用できます
