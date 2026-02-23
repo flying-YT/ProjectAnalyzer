@@ -6,4 +6,16 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PackageId>ProjectAnalyzer.Core</PackageId> <Version>1.0.0</Version>
+    <Authors>flying-YT</Authors>
+    <Description>指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>project;analyzer;llm;markdown;github</PackageTags>
+    <RepositoryUrl>https://github.com/flying-YT/ProjectAnalyzer</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 </Project>
