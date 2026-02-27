@@ -173,3 +173,7 @@ foreach (var context in result.ProjectContexts)
 ## **ライセンス**
 
 このプロジェクトは **MITライセンス** の下で公開されています。
+
+## **謝辞**
+
+* **[ExcelDataReader](https://github.com/ExcelDataReader/ExcelDataReader)** (MIT License)
