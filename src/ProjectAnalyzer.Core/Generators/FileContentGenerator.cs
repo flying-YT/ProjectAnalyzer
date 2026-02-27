@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
+using ExcelDataReader;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Utils;
 
 namespace ProjectAnalyzer.Core.Generators;
+
 /// <summary>
 /// プロジェクト内の各ファイルの内容をMarkdown形式で生成するクラスです。
 /// A class that generates the content of each file in the project in Markdown format.
@@ -24,6 +27,9 @@ public class FileContentGenerator
     public FileContentGenerator(AnalyzerSettings settings)
     {
         _settings = settings;
+        
+        // .NET Core 以降で ExcelDataReader を動作させるためのエンコーディングプロバイダ登録
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
     /// <summary>
@@ -44,6 +50,10 @@ public class FileContentGenerator
         foreach (var file in allFiles)
         {
             string fileMarkdown = GenerateMarkdownForFile(file);
+            
+            // 処理をスキップしたファイル（画像や読み込みエラー等）は無視する
+            if (string.IsNullOrEmpty(fileMarkdown)) continue;
+
             long fileSize = Encoding.UTF8.GetByteCount(fileMarkdown);
 
             if (currentSize + fileSize > MaxFileSize && sb.Length > 0)
@@ -102,8 +112,7 @@ public class FileContentGenerator
         {
             var sb = new StringBuilder();
             string relativePath = Path.GetRelativePath(_settings.ProjectPath, filePath);
-            string content = File.ReadAllText(filePath);
-            string language = LanguageMapper.GetLanguage(Path.GetExtension(filePath));
+            string extension = Path.GetExtension(filePath).ToLowerInvariant();
 
             sb.AppendLine("---");
             sb.AppendLine();
@@ -112,9 +121,25 @@ public class FileContentGenerator
             sb.AppendLine($"**Relative Path:** `{relativePath}`");
             sb.AppendLine();
 
+            string content;
+            string language = "";
+
+            // Excelファイルの場合の特別処理
+            if (extension == ".xlsx" || extension == ".xls")
+            {
+                content = ReadExcelFile(filePath);
+                if (string.IsNullOrEmpty(content)) return string.Empty; // 読み込めなかった場合は空文字
+            }
+            else
+            {
+                // 通常のテキストファイルとして読み込み
+                content = File.ReadAllText(filePath);
+                language = LanguageMapper.GetLanguage(extension);
+            }
+
             sb.AppendLine($"**File Content:**");
             sb.AppendLine("<details>");
-            sb.AppendLine("<summary>View with syntax highlighting</summary>");
+            sb.AppendLine("<summary>View content</summary>");
             sb.AppendLine();
             sb.AppendLine(content);
             sb.AppendLine("</details>");
@@ -122,7 +147,7 @@ public class FileContentGenerator
 
             if (!_settings.OmitCodeBlockTicks)
             {
-                sb.AppendLine($"```{language}");
+                sb.AppendLine(string.IsNullOrEmpty(language) ? "```" : $"```{language}");
             }
             sb.AppendLine(content);
             if (!_settings.OmitCodeBlockTicks)
@@ -138,5 +163,52 @@ public class FileContentGenerator
             Console.WriteLine($"   [Warning] Could not process file '{Path.GetFileName(filePath)}': {ex.Message}");
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Excelファイルを読み込み、マークダウン形式のテキストとして返します。
+    /// </summary>
+    private string ReadExcelFile(string filePath)
+    {
+        var sb = new StringBuilder();
+        
+        using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read))
+        {
+            // ExcelReaderFactory を使用してストリームから読み込む
+            using (var reader = ExcelReaderFactory.CreateReader(stream))
+            {
+                // DataSet に変換することで、シートごとに DataTable として扱える
+                var result = reader.AsDataSet();
+
+                foreach (DataTable table in result.Tables)
+                {
+                    // シート名を見出しにする
+                    sb.AppendLine($"### {table.TableName}");
+
+                    foreach (DataRow row in table.Rows)
+                    {
+                        var rowValues = new List<string>();
+                        foreach (var item in row.ItemArray)
+                        {
+                            // nullやDBNullを空文字に変換
+                            string cellValue = item?.ToString() ?? "";
+                            
+                            // セル内に改行やタブが含まれているとMarkdownのレイアウトが崩れる可能性があるため、空白に置換
+                            cellValue = cellValue.Replace("\n", " ").Replace("\r", "").Replace("\t", " ");
+                            rowValues.Add(cellValue);
+                        }
+                        
+                        // 完全に空の行はスキップ（Excelでは未使用のセルも読み込まれることがあるため）
+                        if (rowValues.All(string.IsNullOrWhiteSpace)) continue;
+
+                        // AIが文脈を解釈しやすいように、カンマ区切り（CSV風）で結合
+                        sb.AppendLine(string.Join(", ", rowValues));
+                    }
+                    sb.AppendLine();
+                }
+            }
+        }
+
+        return sb.ToString();
     }
 }
