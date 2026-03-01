@@ -177,3 +177,4 @@ foreach (var context in result.ProjectContexts)
 ## **謝辞**
 
 * **[ExcelDataReader](https://github.com/ExcelDataReader/ExcelDataReader)** (MIT License)
+* **[DocumentFormat.OpenXml](https://github.com/dotnet/Open-XML-SDK)** (MIT License)

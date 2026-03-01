@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using ExcelDataReader;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Utils;
 
@@ -41,7 +43,7 @@ public class FileContentGenerator
     {
         var fileContents = new List<string>();
         var sb = new StringBuilder();
-        sb.AppendLine("# 📄 Project Context");
+        sb.AppendLine("# \U0001f4c4 Project Context");
         sb.AppendLine();
 
         long currentSize = 0;
@@ -60,7 +62,7 @@ public class FileContentGenerator
             {
                 fileContents.Add(sb.ToString());
                 sb.Clear();
-                sb.AppendLine("# 📄 Project Context (続き)");
+                sb.AppendLine("# \U0001f4c4 Project Context (続き)");
                 sb.AppendLine();
                 currentSize = 0;
             }
@@ -129,6 +131,12 @@ public class FileContentGenerator
             {
                 content = ReadExcelFile(filePath);
                 if (string.IsNullOrEmpty(content)) return string.Empty; // 読み込めなかった場合は空文字
+            }
+            // Wordファイル(.docx)の場合の特別処理
+            else if (extension == ".docx")
+            {
+                content = ReadWordFile(filePath);
+                if (string.IsNullOrEmpty(content)) return string.Empty;
             }
             else
             {
@@ -207,6 +215,36 @@ public class FileContentGenerator
                     sb.AppendLine();
                 }
             }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Wordファイル(.docx)を読み込み、プレーンテキストとして返します。
+    /// </summary>
+    private string ReadWordFile(string filePath)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using (WordprocessingDocument wordDoc = WordprocessingDocument.Open(filePath, false))
+            {
+                var body = wordDoc.MainDocumentPart?.Document?.Body;
+                if (body != null)
+                {
+                    // ドキュメント内の段落(Paragraph)を順番に抽出
+                    foreach (var para in body.Descendants<Paragraph>())
+                    {
+                        sb.AppendLine(para.InnerText);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   [Warning] Could not read Word file '{Path.GetFileName(filePath)}': {ex.Message}");
+            return string.Empty;
         }
 
         return sb.ToString();
