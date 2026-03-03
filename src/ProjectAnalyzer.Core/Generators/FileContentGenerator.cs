@@ -127,7 +127,7 @@ public class FileContentGenerator
             string language = "";
 
             // Excelファイルの場合の特別処理
-            if (extension == ".xlsx" || extension == ".xls")
+            if (extension == ".xlsx" || extension == ".xls" || extension == ".xlsm")
             {
                 content = ReadExcelFile(filePath);
                 if (string.IsNullOrEmpty(content)) return string.Empty; // 読み込めなかった場合は空文字
