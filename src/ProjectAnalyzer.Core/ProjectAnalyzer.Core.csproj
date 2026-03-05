@@ -6,9 +6,9 @@
     <Nullable>enable</Nullable>
 
     <PackageId>ProjectAnalyzer.Core</PackageId>
-    <Version>1.0.1</Version>
+    <Version>1.1.0</Version>
     <Authors>flying-YT</Authors>
-    <Description>指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。</Description>
+    <Description>指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。ExcelやWordにも対応しています。</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>project;analyzer;llm;markdown;github</PackageTags>
     <RepositoryUrl>https://github.com/flying-YT/ProjectAnalyzer</RepositoryUrl>
@@ -17,5 +17,12 @@
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.4.1" />
+    <PackageReference Include="ExcelDataReader" Version="3.8.0" />
+    <PackageReference Include="ExcelDataReader.DataSet" Version="3.8.0" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.3" />
   </ItemGroup>
 </Project>

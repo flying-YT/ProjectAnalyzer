@@ -56,6 +56,9 @@ dist
 
 引数を指定しない場合は、カレントディレクトリが分析対象となり、カレントディレクトリ内の output フォルダに出力されます。
 
+**オプション:**
+* `--no-codeblock`: 出力されるMarkdownファイル内のコードブロック記号（\`\`\`）を省略します。
+
 *   **A. EXEファイルから実行する場合 (Windows)**
 
     配布されている ProjectAnalyzer.Cli.exe を使用します。
@@ -63,6 +66,9 @@ dist
     ```cmd
     # 基本的な使い方 (カレントディレクトリを分析)
     ProjectAnalyzer.Cli.exe
+
+    # コードブロック記号を省略する場合
+    ProjectAnalyzer.Cli.exe --no-codeblock
 
     # パスを指定して実行
     ProjectAnalyzer.Cli.exe "[分析したいプロジェクトのパス]" "[出力先のパス]"
@@ -81,6 +87,9 @@ dist
     ```bash
     # 基本的な使い方
     dotnet run
+
+    # コードブロック記号を省略する場合
+    dotnet run -- --no-codeblock
 
     # パスを指定して実行
     dotnet run -- "[分析したいプロジェクトのパス]" "[出力先のパス]"
@@ -173,3 +182,8 @@ foreach (var context in result.ProjectContexts)
 ## **ライセンス**
 
 このプロジェクトは **MITライセンス** の下で公開されています。
+
+## **謝辞**
+
+* **[ExcelDataReader](https://github.com/ExcelDataReader/ExcelDataReader)** (MIT License)
+* **[DocumentFormat.OpenXml](https://github.com/dotnet/Open-XML-SDK)** (MIT License)
