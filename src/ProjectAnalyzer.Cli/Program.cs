@@ -17,8 +17,8 @@ bool omitCodeBlockTicks = args.Contains("--no-codeblock");
 var pathArgs = args.Where(a => !a.StartsWith("--")).ToArray();
 
 // 3. パスの引数を割り当てる
-string projectPath = args.Length > 0 ? args[0] : ".";
-string outputPath = args.Length > 1 ? args[1] : "output";
+string projectPath = pathArgs.Length > 0 ? pathArgs[0] : ".";
+string outputPath = pathArgs.Length > 1 ? pathArgs[1] : "output";
 
 // --- メイン処理 ---
 // --- Main Process ---
