@@ -156,10 +156,7 @@ public class FileContentGenerator
             if (!_settings.OmitCodeBlockTicks)
             {
                 sb.AppendLine(string.IsNullOrEmpty(language) ? "```" : $"```{language}");
-            }
-            sb.AppendLine(content);
-            if (!_settings.OmitCodeBlockTicks)
-            {
+                sb.AppendLine(content);
                 sb.AppendLine("```");
             }
             sb.AppendLine();
