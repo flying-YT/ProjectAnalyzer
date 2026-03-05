@@ -10,6 +10,13 @@ using ProjectAnalyzer.Core.Utils;
 
 // --- 設定 ---
 // --- Settings ---
+// 1. 引数の中から "--no-codeblock" フラグが含まれているか確認する
+bool omitCodeBlockTicks = args.Contains("--no-codeblock");
+
+// 2. フラグ（"--" で始まるもの）以外の引数をパスとして抽出する
+var pathArgs = args.Where(a => !a.StartsWith("--")).ToArray();
+
+// 3. パスの引数を割り当てる
 string projectPath = args.Length > 0 ? args[0] : ".";
 string outputPath = args.Length > 1 ? args[1] : "output";
 
@@ -19,7 +26,12 @@ try
 {
     // 1. 設定の読み込み
     // 1. Load settings
-    var settings = SettingsLoader.Load(projectPath, outputPath);
+    var settings = SettingsLoader.Load(
+        projectPath, 
+        outputPath, 
+        outputToFile: true, 
+        omitCodeBlockTicks: omitCodeBlockTicks
+    );
 
     Console.WriteLine("--- Project Analyzer ---");
     Console.WriteLine($"🔍 Project Path: {settings.ProjectPath}");
