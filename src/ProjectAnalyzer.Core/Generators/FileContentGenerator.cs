@@ -31,6 +31,7 @@ public class FileContentGenerator
         _settings = settings;
         
         // .NET Core 以降で ExcelDataReader を動作させるためのエンコーディングプロバイダ登録
+        // Register encoding provider to make ExcelDataReader work in .NET Core and later.
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
@@ -54,6 +55,7 @@ public class FileContentGenerator
             string fileMarkdown = GenerateMarkdownForFile(file);
             
             // 処理をスキップしたファイル（画像や読み込みエラー等）は無視する
+            // Ignore files that were skipped (e.g., images, read errors).
             if (string.IsNullOrEmpty(fileMarkdown)) continue;
 
             long fileSize = Encoding.UTF8.GetByteCount(fileMarkdown);
@@ -79,6 +81,12 @@ public class FileContentGenerator
         return fileContents;
     }
 
+    /// <summary>
+    /// 指定されたパス以下のすべてのファイルを取得します（除外リストを考慮）。
+    /// Gets all files under the specified path (considering the ignore list).
+    /// </summary>
+    /// <param name="path">検索を開始するディレクトリパス / The directory path to start searching.</param>
+    /// <returns>ファイルパスのリスト / A list of file paths.</returns>
     private List<string> GetAllFiles(string path)
     {
         var files = new List<string>();
@@ -127,12 +135,14 @@ public class FileContentGenerator
             string language = "";
 
             // Excelファイルの場合の特別処理
+            // Special handling for Excel files.
             if (extension == ".xlsx" || extension == ".xls" || extension == ".xlsm")
             {
                 content = ReadExcelFile(filePath);
                 if (string.IsNullOrEmpty(content)) return string.Empty; // 読み込めなかった場合は空文字
             }
             // Wordファイル(.docx)の場合の特別処理
+            // Special handling for Word files (.docx).
             else if (extension == ".docx")
             {
                 content = ReadWordFile(filePath);
@@ -141,6 +151,7 @@ public class FileContentGenerator
             else
             {
                 // 通常のテキストファイルとして読み込み
+                // Read as a normal text file.
                 content = File.ReadAllText(filePath);
                 language = LanguageMapper.GetLanguage(extension);
             }
@@ -172,6 +183,7 @@ public class FileContentGenerator
 
     /// <summary>
     /// Excelファイルを読み込み、マークダウン形式のテキストとして返します。
+    /// Reads an Excel file and returns it as Markdown formatted text.
     /// </summary>
     private string ReadExcelFile(string filePath)
     {
@@ -180,14 +192,17 @@ public class FileContentGenerator
         using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read))
         {
             // ExcelReaderFactory を使用してストリームから読み込む
+            // Read from stream using ExcelReaderFactory.
             using (var reader = ExcelReaderFactory.CreateReader(stream))
             {
                 // DataSet に変換することで、シートごとに DataTable として扱える
+                // Convert to DataSet to handle each sheet as a DataTable.
                 var result = reader.AsDataSet();
 
                 foreach (DataTable table in result.Tables)
                 {
                     // シート名を見出しにする
+                    // Use sheet name as a heading.
                     sb.AppendLine($"### {table.TableName}");
 
                     foreach (DataRow row in table.Rows)
@@ -196,17 +211,21 @@ public class FileContentGenerator
                         foreach (var item in row.ItemArray)
                         {
                             // nullやDBNullを空文字に変換
+                            // Convert null or DBNull to empty string.
                             string cellValue = item?.ToString() ?? "";
                             
                             // セル内に改行やタブが含まれているとMarkdownのレイアウトが崩れる可能性があるため、空白に置換
+                            // Replace newlines and tabs with spaces to prevent Markdown layout issues.
                             cellValue = cellValue.Replace("\n", " ").Replace("\r", "").Replace("\t", " ");
                             rowValues.Add(cellValue);
                         }
                         
                         // 完全に空の行はスキップ（Excelでは未使用のセルも読み込まれることがあるため）
+                        // Skip completely empty rows (as Excel may read unused cells).
                         if (rowValues.All(string.IsNullOrWhiteSpace)) continue;
 
                         // AIが文脈を解釈しやすいように、カンマ区切り（CSV風）で結合
+                        // Join with commas (CSV style) to make context easier for AI to interpret.
                         sb.AppendLine(string.Join(", ", rowValues));
                     }
                     sb.AppendLine();
@@ -219,6 +238,7 @@ public class FileContentGenerator
 
     /// <summary>
     /// Wordファイル(.docx)を読み込み、プレーンテキストとして返します。
+    /// Reads a Word file (.docx) and returns it as plain text.
     /// </summary>
     private string ReadWordFile(string filePath)
     {
@@ -231,6 +251,7 @@ public class FileContentGenerator
                 if (body != null)
                 {
                     // ドキュメント内の段落(Paragraph)を順番に抽出
+                    // Sequentially extract paragraphs (Paragraph) in the document.
                     foreach (var para in body.Descendants<Paragraph>())
                     {
                         sb.AppendLine(para.InnerText);
@@ -249,8 +270,9 @@ public class FileContentGenerator
 
     /// <summary>
     /// プロジェクト内の各ファイルに対して、個別のMarkdownコンテンツを生成します。
+    /// Generates individual Markdown content for each file in the project.
     /// </summary>
-    /// <returns>相対ファイルパス（拡張子.md付き）とMarkdownコンテンツのペアのリスト。</returns>
+    /// <returns>相対ファイルパス（拡張子.md付き）とMarkdownコンテンツのペアのリスト。 / A list of pairs of relative file paths (with .md extension) and Markdown content.</returns>
     public List<(string RelativePath, string Content)> GeneratePerFile()
     {
         var fileContents = new List<(string, string)>();
@@ -262,6 +284,7 @@ public class FileContentGenerator
             if (string.IsNullOrEmpty(fileMarkdown)) continue;
 
             // 元の相対パスを取得し、末尾に .md を追加する（例: "src/Utils.cs" -> "src/Utils.cs.md"）
+            // Get the original relative path and append .md to the end (e.g., "src/Utils.cs" -> "src/Utils.cs.md").
             string relativePath = Path.GetRelativePath(_settings.ProjectPath, file);
             string markdownRelativePath = relativePath + ".md";
 

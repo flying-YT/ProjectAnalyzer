@@ -33,6 +33,7 @@ public class TreeGenerator
         sb.AppendLine(rootDirInfo.Name);
         
         // 修正: 第4引数(isLast)は不要になったため削除
+        // Fix: Removed the 4th argument (isLast) as it is no longer needed.
         GenerateRecursive(rootDirInfo, "", sb);
         
         return sb.ToString();
@@ -62,12 +63,15 @@ public class TreeGenerator
             bool isLastEntry = (i == subDirectories.Count - 1) && (files.Count == 0);
             
             // 1. 現在のディレクトリの枝を描画
+            // 1. Draw the branch for the current directory.
             sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{subDir.Name}");
             
             // 2. 次の階層へ渡すインデントを作成（自分が最後なら空白、続くなら縦線）
+            // 2. Create indentation to pass to the next level (space if last, vertical line otherwise).
             string nextIndent = indent + (isLastEntry ? "    " : "│   ");
             
             // 3. 子要素の再帰処理
+            // 3. Recursive processing of child elements.
             GenerateRecursive(subDir, nextIndent, sb);
         }
 
@@ -77,6 +81,7 @@ public class TreeGenerator
             bool isLastEntry = (i == files.Count - 1);
             
             // 1. 現在のファイルの枝を描画
+            // 1. Draw the branch for the current file.
             sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{file.Name}");
         }
     }

@@ -58,6 +58,7 @@ public class Analyzer: IDisposable
         Console.WriteLine("📄 Generating file contents...");
 
         // 【修正】個別出力モードか統合出力モードかで分岐
+        // [Fix] Branch based on individual file output mode or integrated output mode.
         if (_settings.OutputPerFile)
         {
             var individualContents = _fileContentGenerator.GeneratePerFile();
@@ -66,6 +67,7 @@ public class Analyzer: IDisposable
             if (_settings.OutputToFile)
             {
                 // 個別ファイル出力用の親ディレクトリを作成
+                // Create parent directory for individual file output.
                 string contextDir = Path.Combine(_settings.OutputPath, "01_ProjectContexts");
                 Directory.CreateDirectory(contextDir);
 
@@ -73,6 +75,7 @@ public class Analyzer: IDisposable
                 {
                     string outputFilePath = Path.Combine(contextDir, item.RelativePath);
                     // サブディレクトリが存在しない場合は階層構造ごと作成する（重複回避）
+                    // Create directory structure if subdirectory does not exist (avoid duplication).
                     Directory.CreateDirectory(Path.GetDirectoryName(outputFilePath)!);
                     
                     File.WriteAllText(outputFilePath, item.Content);
@@ -87,6 +90,7 @@ public class Analyzer: IDisposable
         else
         {
             // 従来の統合出力モード
+            // Traditional integrated output mode.
             var allFilesContents = _fileContentGenerator.Generate();
             result.ProjectContexts = allFilesContents;
 
@@ -128,9 +132,14 @@ public class Analyzer: IDisposable
         Directory.CreateDirectory(_settings.OutputPath);
     }
     
+    /// <summary>
+    /// リソースを解放します。一時ディレクトリが存在する場合は削除します。
+    /// Releases resources. Deletes the temporary directory if it exists.
+    /// </summary>
     public void Dispose()
     {
         // 一時フォルダが設定されていて、存在する場合のみ削除を実行
+        // Execute deletion only if a temporary folder is set and exists.
         if (!string.IsNullOrEmpty(_settings.TempClonePath) && Directory.Exists(_settings.TempClonePath))
         {
             try
@@ -146,6 +155,11 @@ public class Analyzer: IDisposable
         }
     }
 
+    /// <summary>
+    /// 指定されたディレクトリ内のすべてのファイルの読み取り専用属性を削除します。
+    /// Removes read-only attributes from all files in the specified directory.
+    /// </summary>
+    /// <param name="directory">処理対象のディレクトリ / The directory to process.</param>
     private void RemoveReadOnlyAttributes(DirectoryInfo directory)
     {
         foreach (var file in directory.GetFiles("*", SearchOption.AllDirectories))

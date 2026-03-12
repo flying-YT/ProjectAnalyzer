@@ -8,14 +8,52 @@ namespace ProjectAnalyzer.Core.Models;
 /// </summary>
 public class AnalyzerSettings
 {
+    /// <summary>
+    /// 分析対象のプロジェクトパス / The project path to analyze.
+    /// </summary>
     public string ProjectPath { get; }
+    
+    /// <summary>
+    /// 出力先のパス / The output path.
+    /// </summary>
     public string OutputPath { get; }
+    
+    /// <summary>
+    /// 無視するファイルやディレクトリのリスト / The list of files and directories to ignore.
+    /// </summary>
     public ISet<string> IgnoreList { get; }
+    
+    /// <summary>
+    /// ファイルに出力するかどうか / Whether to output to a file.
+    /// </summary>
     public bool OutputToFile { get; }
+    
+    /// <summary>
+    /// コードブロックのバッククォートを省略するかどうか / Whether to omit code block backticks.
+    /// </summary>
     public bool OmitCodeBlockTicks { get; }
+    
+    /// <summary>
+    /// ファイルごとに個別に出力するかどうか / Whether to output per file individually.
+    /// </summary>
     public bool OutputPerFile { get; }
+    
+    /// <summary>
+    /// 一時的なクローンパス（Gitリポジトリの場合） / The temporary clone path (for Git repositories).
+    /// </summary>
     public string? TempClonePath { get; }
 
+    /// <summary>
+    /// AnalyzerSettings クラスの新しいインスタンスを初期化します。
+    /// Initializes a new instance of the AnalyzerSettings class.
+    /// </summary>
+    /// <param name="projectPath">プロジェクトパス / Project path</param>
+    /// <param name="outputPath">出力パス / Output path</param>
+    /// <param name="ignoreList">除外リスト / Ignore list</param>
+    /// <param name="outputToFile">ファイル出力フラグ / File output flag</param>
+    /// <param name="omitCodeBlockTicks">コードブロック省略フラグ / Omit code block ticks flag</param>
+    /// <param name="outputPerFile">個別出力フラグ / Output per file flag</param>
+    /// <param name="tempClonePath">一時クローンパス / Temporary clone path</param>
     public AnalyzerSettings(string projectPath, string outputPath, ISet<string> ignoreList, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, string? tempClonePath = null)
     {
         ProjectPath = Path.GetFullPath(projectPath);
