@@ -18,4 +18,10 @@ public class AnalyzerResult
     /// A list of contents summarizing the contents of each file.
     /// </summary>
     public List<string> ProjectContexts { get; set; } = new();
+
+    /// <summary>
+    /// 
+    /// 
+    /// </summary>
+    public List<(string RelativePath, string Content)> IndividualFileContexts { get; set; } = new();
 }

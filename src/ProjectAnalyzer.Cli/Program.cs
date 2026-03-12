@@ -10,8 +10,9 @@ using ProjectAnalyzer.Core.Utils;
 
 // --- 設定 ---
 // --- Settings ---
-// 1. 引数の中から "--no-codeblock" フラグが含まれているか確認する
+// 1. 引数の中からフラグが含まれているか確認する
 bool omitCodeBlockTicks = args.Contains("--no-codeblock");
+bool outputPerFile = args.Contains("--per-file");
 
 // 2. フラグ（"--" で始まるもの）以外の引数をパスとして抽出する
 var pathArgs = args.Where(a => !a.StartsWith("--")).ToArray();
@@ -30,7 +31,8 @@ try
         projectPath, 
         outputPath, 
         outputToFile: true, 
-        omitCodeBlockTicks: omitCodeBlockTicks
+        omitCodeBlockTicks: omitCodeBlockTicks,
+        outputPerFile: outputPerFile
     );
 
     Console.WriteLine("--- Project Analyzer ---");

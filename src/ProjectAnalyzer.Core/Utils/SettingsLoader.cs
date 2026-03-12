@@ -25,7 +25,7 @@ public static class SettingsLoader
     /// <param name="outputToFile">ファイル出力を行うかどうかのフラグ。/ A flag indicating whether to perform file output.</param>
     /// <param name="omitCodeBlockTicks">Markdownのコードブロック(```)を省略するかどうかのフラグ。/ A flag indicating whether to omit Markdown code blocks (```).</param>
     /// <returns>読み込まれた設定情報を含む `AnalyzerSettings` インスタンス。/ An `AnalyzerSettings` instance containing the loaded configuration.</returns>
-    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false)   
+    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false)   
     {
         string targetPath = projectPath;
         string? tempCloneDir = null;
@@ -130,6 +130,6 @@ public static class SettingsLoader
             }
         }
 
-        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, tempCloneDir);
+        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir);
     }
 }

@@ -56,31 +56,63 @@ public class Analyzer: IDisposable
         }
 
         Console.WriteLine("📄 Generating file contents...");
-        var allFilesContents = _fileContentGenerator.Generate();
-        result.ProjectContexts = allFilesContents;
 
-        if (_settings.OutputToFile)
+        // 【修正】個別出力モードか統合出力モードかで分岐
+        if (_settings.OutputPerFile)
         {
-            if (allFilesContents.Count == 1)
+            var individualContents = _fileContentGenerator.GeneratePerFile();
+            result.IndividualFileContexts = individualContents;
+
+            if (_settings.OutputToFile)
             {
-                string outputFilePath = Path.Combine(_settings.OutputPath, "01_ProjectContext.md");
-                File.WriteAllText(outputFilePath, allFilesContents[0]);
-                Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}\n");
+                // 個別ファイル出力用の親ディレクトリを作成
+                string contextDir = Path.Combine(_settings.OutputPath, "01_ProjectContexts");
+                Directory.CreateDirectory(contextDir);
+
+                foreach (var item in individualContents)
+                {
+                    string outputFilePath = Path.Combine(contextDir, item.RelativePath);
+                    // サブディレクトリが存在しない場合は階層構造ごと作成する（重複回避）
+                    Directory.CreateDirectory(Path.GetDirectoryName(outputFilePath)!);
+                    
+                    File.WriteAllText(outputFilePath, item.Content);
+                }
+                Console.WriteLine($"   -> Success: Generated {individualContents.Count} individual markdown files in '01_ProjectContexts/' directory\n");
             }
             else
             {
-                for (int i = 0; i < allFilesContents.Count; i++)
-                {
-                    string outputFilePath = Path.Combine(_settings.OutputPath, $"01_ProjectContext_{i + 1}.md");
-                    File.WriteAllText(outputFilePath, allFilesContents[i]);
-                    Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}");
-                }
-                Console.WriteLine();
+                Console.WriteLine($"   -> Skipped file output (kept {individualContents.Count} individual contexts in memory)\n");
             }
         }
         else
         {
-            Console.WriteLine($"   -> Skipped file output (kept {allFilesContents.Count} contexts in memory)\n");
+            // 従来の統合出力モード
+            var allFilesContents = _fileContentGenerator.Generate();
+            result.ProjectContexts = allFilesContents;
+
+            if (_settings.OutputToFile)
+            {
+                if (allFilesContents.Count == 1)
+                {
+                    string outputFilePath = Path.Combine(_settings.OutputPath, "01_ProjectContext.md");
+                    File.WriteAllText(outputFilePath, allFilesContents[0]);
+                    Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}\n");
+                }
+                else
+                {
+                    for (int i = 0; i < allFilesContents.Count; i++)
+                    {
+                        string outputFilePath = Path.Combine(_settings.OutputPath, $"01_ProjectContext_{i + 1}.md");
+                        File.WriteAllText(outputFilePath, allFilesContents[i]);
+                        Console.WriteLine($"   -> Success: {Path.GetFileName(outputFilePath)}");
+                    }
+                    Console.WriteLine();
+                }
+            }
+            else
+            {
+                Console.WriteLine($"   -> Skipped file output (kept {allFilesContents.Count} contexts in memory)\n");
+            }
         }
 
         return result;

@@ -246,4 +246,28 @@ public class FileContentGenerator
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// プロジェクト内の各ファイルに対して、個別のMarkdownコンテンツを生成します。
+    /// </summary>
+    /// <returns>相対ファイルパス（拡張子.md付き）とMarkdownコンテンツのペアのリスト。</returns>
+    public List<(string RelativePath, string Content)> GeneratePerFile()
+    {
+        var fileContents = new List<(string, string)>();
+        var allFiles = GetAllFiles(_settings.ProjectPath);
+
+        foreach (var file in allFiles)
+        {
+            string fileMarkdown = GenerateMarkdownForFile(file);
+            if (string.IsNullOrEmpty(fileMarkdown)) continue;
+
+            // 元の相対パスを取得し、末尾に .md を追加する（例: "src/Utils.cs" -> "src/Utils.cs.md"）
+            string relativePath = Path.GetRelativePath(_settings.ProjectPath, file);
+            string markdownRelativePath = relativePath + ".md";
+
+            fileContents.Add((markdownRelativePath, fileMarkdown));
+        }
+
+        return fileContents;
+    }
 }
