@@ -148,7 +148,8 @@ var settings = SettingsLoader.Load(
     outputPath: "", // 出力しない場合は空で構いません
     outputToFile: false,
     omitCodeBlockTicks: true,
-    sanitizeHtmlTags: true
+    sanitizeHtmlTags: true,
+    removeIndent: true
 );
 
 using var analyzer = new Analyzer(settings);
