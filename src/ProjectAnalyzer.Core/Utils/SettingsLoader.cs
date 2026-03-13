@@ -24,29 +24,37 @@ public static class SettingsLoader
     /// <param name="outputPath">分析結果を出力するディレクトリのパス。/ The path to the directory where the analysis results will be output.</param>
     /// <param name="outputToFile">ファイル出力を行うかどうかのフラグ。/ A flag indicating whether to perform file output.</param>
     /// <param name="omitCodeBlockTicks">Markdownのコードブロック(```)を省略するかどうかのフラグ。/ A flag indicating whether to omit Markdown code blocks (```).</param>
+    /// <param name="outputPerFile">個別にファイルを出力するかどうかのフラグ。/ A flag indicating whether to output files individually.</param>
+    /// <param name="sanitizeHtmlTags">HTMLタグを置換するかどうかのフラグ。/ A flag indicating whether to sanitize HTML tags.</param>
+    /// <param name="removeIndent">インデントを削除するかどうかのフラグ。/ A flag indicating whether to remove indents.</param>
     /// <returns>読み込まれた設定情報を含む `AnalyzerSettings` インスタンス。/ An `AnalyzerSettings` instance containing the loaded configuration.</returns>
-    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false)   
+    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, bool sanitizeHtmlTags = false, bool removeIndent = false)   
     {
         string targetPath = projectPath;
         string? tempCloneDir = null;
 
         // URLの場合は Git Clone を実行する
+        // Execute Git Clone if it is a URL.
         if (projectPath.StartsWith("https://github.com/", StringComparison.OrdinalIgnoreCase))
         {
             string cloneUrl = projectPath;
             string branchName = string.Empty;
 
             // URLに "/tree/" が含まれている場合、リポジトリURLとブランチ名に分割する
+            // If the URL contains "/tree/", split it into the repository URL and the branch name.
             const string treeIndicator = "/tree/";
             int treeIndex = projectPath.IndexOf(treeIndicator, StringComparison.OrdinalIgnoreCase);
             
             if (treeIndex > 0)
             {
                 cloneUrl = projectPath.Substring(0, treeIndex); // ベースのリポジトリURL
+                                                                // Base repository URL
                 branchName = projectPath.Substring(treeIndex + treeIndicator.Length).TrimEnd('/'); // ブランチ名
+                                                                                                   // Branch name
             }
 
             // リポジトリ名を抽出 (ツリー表示を見やすくするため)
+            // Extract repository name (to make the tree view easier to read).
             string repoName = cloneUrl.TrimEnd('/').Split('/').Last();
             if (repoName.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
             {
@@ -57,6 +65,7 @@ public static class SettingsLoader
             Directory.CreateDirectory(tempCloneDir);
 
             // PATによる認証の組み込み
+            // Incorporate authentication using PAT.
             string authCloneUrl = cloneUrl;
             string? pat = Environment.GetEnvironmentVariable("GITHUB_PAT");
             if (!string.IsNullOrEmpty(pat))
@@ -67,6 +76,7 @@ public static class SettingsLoader
             }
 
             // ログ出力の切り替え
+            // Switch log output.
             if (string.IsNullOrEmpty(branchName))
             {
                 Console.WriteLine($"📥 Cloning repository from {cloneUrl}...");
@@ -77,10 +87,12 @@ public static class SettingsLoader
             }
 
             // git clone コマンドの引数を動的に組み立てる
+            // Dynamically assemble the arguments for the git clone command.
             string gitArgs = "clone --depth 1";
             if (!string.IsNullOrEmpty(branchName))
             {
                 // ブランチ指定がある場合は -b オプションを追加
+                // Add -b option if a branch is specified.
                 gitArgs += $" -b \"{branchName}\"";
             }
             gitArgs += $" \"{authCloneUrl}\" \"{tempCloneDir}\"";
@@ -99,14 +111,16 @@ public static class SettingsLoader
             if (process == null || process.ExitCode != 0)
             {
                 string error = process?.StandardError.ReadToEnd() ?? "Unknown error";
-                throw new Exception($"Git clone failed: {error}\nCommand Executed: git {gitArgs.Replace(authCloneUrl, cloneUrl)}"); // ログにPATが漏れないように置換
+                throw new Exception($"Git clone failed: {error}\nCommand Executed: git {gitArgs.Replace(authCloneUrl, cloneUrl)}"); // ログにPATが漏れないように置換 / Replace to prevent PAT leakage in logs
             }
 
             // 分析対象のパスをクローンした一時フォルダに差し替える
+            // Replace the analysis target path with the cloned temporary folder.
             targetPath = tempCloneDir;
         }
 
         // --- 以下は既存のロジック ---
+        // --- The following is the existing logic ---
         var ignoreList = new HashSet<string>
         {
             "bin", "obj", ".vs", ".git"
@@ -130,6 +144,6 @@ public static class SettingsLoader
             }
         }
 
-        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, tempCloneDir);
+        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir, sanitizeHtmlTags, removeIndent);
     }
 }

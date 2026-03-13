@@ -14,6 +14,7 @@
 * **⚙️ 柔軟な除外設定** .projectanalyzerignore ファイルを使用して、分析から除外したいファイルやフォルダを簡単に指定できます。また、bin obj .git などの一般的なフォルダはデフォルトで除外されます。  
 * **💻 柔軟な利用形態 (CLI / DLL)** CLIツール（EXEファイル）としてスタンドアロンで実行できるほか、コアロジック（ProjectAnalyzer.Core）をDLLやNuGetパッケージとして自作のプロジェクトに組み込んで利用することも可能です。  
 * **🧠 メモリ上での結果取得 (DLL利用時)** ファイルへの書き出しを行わず、分析結果のテキストデータをプログラム内で直接受け取ることができます。Markdownのコードブロック記号（\`\`\`）を省略するオプションも備えており、他のシステムとの連携が容易です。
+* **🛡️ NotebookLM向けのHTML無害化機能**  --sanitize-html オプションを指定することで、出力結果に含まれるHTMLタグ（&lt;details>, &lt;div>など）を ＜details＞ のような無害な形式（全角）に変換し、AIが誤ってコードを解釈してしまうのを防ぎます。
 
 ## **必要なもの**
 
@@ -58,6 +59,9 @@ dist
 
 **オプション:**
 * `--no-codeblock`: 出力されるMarkdownファイル内のコードブロック記号（\`\`\`）を省略します。
+* `--sanitize-html`: NotebookLMなどでコード内のHTMLタグが誤動作するのを防ぐため、&lt;details> などのタグを ＜details＞ に置換して出力します。ソースコード内の if (a < b) などは影響を受けません。
+* `--remove-indent`: 行頭にあるインデント（スペースやタブ）をすべて削除します。インデントによるMarkdownコードブロックの誤解釈を防ぐために利用します（※Pythonなどインデントに意味がある言語の構造が壊れる可能性があるため注意してください）。
+* `--per-file`: ファイルごとに個別のMarkdownファイルを出力します。
 
 *   **A. EXEファイルから実行する場合 (Windows)**
 
@@ -69,6 +73,9 @@ dist
 
     # コードブロック記号を省略する場合
     ProjectAnalyzer.Cli.exe --no-codeblock
+
+    # コードブロック記号を省略し、AIツール向けに記号とインデントを取り除く場合
+    rojectAnalyzer.Cli.exe --no-codeblock --sanitize-html --remove-indent
 
     # パスを指定して実行
     ProjectAnalyzer.Cli.exe "[分析したいプロジェクトのパス]" "[出力先のパス]"
@@ -90,6 +97,9 @@ dist
 
     # コードブロック記号を省略する場合
     dotnet run -- --no-codeblock
+
+    # コードブロック記号を省略し、AIツール向けに記号とインデントを取り除く場合
+    dotnet run -- --no-codeblock --sanitize-html --remove-indent
 
     # パスを指定して実行
     dotnet run -- "[分析したいプロジェクトのパス]" "[出力先のパス]"
@@ -137,7 +147,9 @@ var settings = SettingsLoader.Load(
     projectPath: "C:\\path\\to\\your\\project",
     outputPath: "", // 出力しない場合は空で構いません
     outputToFile: false,
-    omitCodeBlockTicks: true
+    omitCodeBlockTicks: true,
+    sanitizeHtmlTags: true,
+    removeIndent: true
 );
 
 using var analyzer = new Analyzer(settings);
