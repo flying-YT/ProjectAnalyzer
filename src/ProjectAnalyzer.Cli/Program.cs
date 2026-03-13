@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using ProjectAnalyzer.Core;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Utils;
@@ -13,6 +14,8 @@ using ProjectAnalyzer.Core.Utils;
 // 1. 引数の中からフラグが含まれているか確認する
 bool omitCodeBlockTicks = args.Contains("--no-codeblock");
 bool outputPerFile = args.Contains("--per-file");
+bool sanitizeHtmlTags = args.Contains("--sanitize-html");
+bool removeIndent = args.Contains("--remove-indent");
 
 // 2. フラグ（"--" で始まるもの）以外の引数をパスとして抽出する
 var pathArgs = args.Where(a => !a.StartsWith("--")).ToArray();
@@ -32,7 +35,9 @@ try
         outputPath, 
         outputToFile: true, 
         omitCodeBlockTicks: omitCodeBlockTicks,
-        outputPerFile: outputPerFile
+        outputPerFile: outputPerFile,
+        sanitizeHtmlTags: sanitizeHtmlTags,
+        removeIndent: removeIndent // 設定に追加
     );
 
     Console.WriteLine("--- Project Analyzer ---");

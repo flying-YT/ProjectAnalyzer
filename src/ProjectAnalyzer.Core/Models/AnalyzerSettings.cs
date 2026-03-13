@@ -39,6 +39,16 @@ public class AnalyzerSettings
     public bool OutputPerFile { get; }
     
     /// <summary>
+    /// HTMLタグを無害な形式（[tag]）に置換するかどうか / Whether to sanitize HTML tags.
+    /// </summary>
+    public bool SanitizeHtmlTags { get; }
+
+    /// <summary>
+    /// 行頭のインデントをすべて削除するかどうか / Whether to remove all line indents.
+    /// </summary>
+    public bool RemoveIndent { get; }
+
+    /// <summary>
     /// 一時的なクローンパス（Gitリポジトリの場合） / The temporary clone path (for Git repositories).
     /// </summary>
     public string? TempClonePath { get; }
@@ -54,7 +64,9 @@ public class AnalyzerSettings
     /// <param name="omitCodeBlockTicks">コードブロック省略フラグ / Omit code block ticks flag</param>
     /// <param name="outputPerFile">個別出力フラグ / Output per file flag</param>
     /// <param name="tempClonePath">一時クローンパス / Temporary clone path</param>
-    public AnalyzerSettings(string projectPath, string outputPath, ISet<string> ignoreList, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, string? tempClonePath = null)
+    /// <param name="sanitizeHtmlTags">HTMLタグ無害化フラグ / Sanitize HTML tags flag</param>
+    /// <param name="removeIndent">インデント削除フラグ / Remove indent flag</param>
+    public AnalyzerSettings(string projectPath, string outputPath, ISet<string> ignoreList, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, string? tempClonePath = null, bool sanitizeHtmlTags = false, bool removeIndent = false)
     {
         ProjectPath = Path.GetFullPath(projectPath);
         OutputPath = string.IsNullOrWhiteSpace(outputPath) ? string.Empty : Path.GetFullPath(outputPath);
@@ -63,5 +75,7 @@ public class AnalyzerSettings
         OmitCodeBlockTicks = omitCodeBlockTicks;
         OutputPerFile = outputPerFile;
         TempClonePath = tempClonePath;
+        SanitizeHtmlTags = sanitizeHtmlTags;
+        RemoveIndent = removeIndent;
     }
 }

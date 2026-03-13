@@ -24,8 +24,11 @@ public static class SettingsLoader
     /// <param name="outputPath">分析結果を出力するディレクトリのパス。/ The path to the directory where the analysis results will be output.</param>
     /// <param name="outputToFile">ファイル出力を行うかどうかのフラグ。/ A flag indicating whether to perform file output.</param>
     /// <param name="omitCodeBlockTicks">Markdownのコードブロック(```)を省略するかどうかのフラグ。/ A flag indicating whether to omit Markdown code blocks (```).</param>
+    /// <param name="outputPerFile">個別にファイルを出力するかどうかのフラグ。/ A flag indicating whether to output files individually.</param>
+    /// <param name="sanitizeHtmlTags">HTMLタグを置換するかどうかのフラグ。/ A flag indicating whether to sanitize HTML tags.</param>
+    /// <param name="removeIndent">インデントを削除するかどうかのフラグ。/ A flag indicating whether to remove indents.</param>
     /// <returns>読み込まれた設定情報を含む `AnalyzerSettings` インスタンス。/ An `AnalyzerSettings` instance containing the loaded configuration.</returns>
-    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false)   
+    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, bool sanitizeHtmlTags = false, bool removeIndent = false)   
     {
         string targetPath = projectPath;
         string? tempCloneDir = null;
@@ -141,6 +144,6 @@ public static class SettingsLoader
             }
         }
 
-        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir);
+        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir, sanitizeHtmlTags, removeIndent);
     }
 }

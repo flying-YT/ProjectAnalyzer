@@ -4,6 +4,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using ExcelDataReader;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -156,12 +157,33 @@ public class FileContentGenerator
                 language = LanguageMapper.GetLanguage(extension);
             }
 
+            // HTMLタグを無害化するオプションが有効な場合
+            // "if (a < b)" 等を除外するため、"<" の直後にアルファベットか "/" が続くパターンのみ置換する
+            if (_settings.SanitizeHtmlTags)
+            {
+                // [] ではなく全角の ＜ ＞ に置換してMarkdownのパース誤動作を防ぐ
+                content = Regex.Replace(content, @"<(/?[a-zA-Z][^<>]*)>", "＜$1＞");
+            }
+
+            // インデントを削除するオプションが有効な場合
+            // Markdownで4スペースがコードブロックとして解釈されるのを防ぐ
+            if (_settings.RemoveIndent)
+            {
+                // 複数行モード(?m)で行頭の空白文字(スペース、タブ)を削除
+                content = Regex.Replace(content, @"(?m)^[ \t]+", "");
+            }
+
+            // NotebookLM対策：ツールが出力する details/summary タグも置換対象にする
+            string detailsOpen = _settings.SanitizeHtmlTags ? "＜details＞" : "<details>";
+            string detailsClose = _settings.SanitizeHtmlTags ? "＜/details＞" : "</details>";
+            string summaryText = _settings.SanitizeHtmlTags ? "＜summary＞View content＜/summary＞" : "<summary>View content</summary>";
+
             sb.AppendLine($"**File Content:**");
-            sb.AppendLine("<details>");
-            sb.AppendLine("<summary>View content</summary>");
+            sb.AppendLine(detailsOpen);
+            sb.AppendLine(summaryText);
             sb.AppendLine();
             sb.AppendLine(content);
-            sb.AppendLine("</details>");
+            sb.AppendLine(detailsClose);
             sb.AppendLine();
 
             if (!_settings.OmitCodeBlockTicks)

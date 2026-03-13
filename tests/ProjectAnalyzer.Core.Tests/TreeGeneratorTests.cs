@@ -32,7 +32,7 @@ public class TreeGeneratorTests : IDisposable
     public void Generate_CreatesCorrectTreeStructure()
     {
         // Arrange
-        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string> { "FolderB" }, false, false);
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string> { "FolderB" }, outputToFile: false, omitCodeBlockTicks: false);
         var generator = new TreeGenerator(settings);
 
         // Act
