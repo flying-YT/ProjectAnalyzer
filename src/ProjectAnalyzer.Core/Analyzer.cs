@@ -42,7 +42,9 @@ public class Analyzer: IDisposable
 
         Console.WriteLine("🌳 Generating folder tree...");
         string tree = _treeGenerator.Generate();
-        string treeContent = $"# 🌳 Project Folder Tree\n\n```\n{tree}\n```";
+        string treeContent = _settings.OmitCodeBlockTicks 
+            ? $"# 🌳 Project Folder Tree\n\n{tree}" 
+            : $"# 🌳 Project Folder Tree\n\n```\n{tree}\n```";
         result.ProjectTree = treeContent;
 
         if (_settings.OutputToFile)
