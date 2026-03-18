@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using ExcelDataReader;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentFormat.OpenXml.Presentation;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Utils;
 
@@ -149,6 +150,13 @@ public class FileContentGenerator
                 content = ReadWordFile(filePath);
                 if (string.IsNullOrEmpty(content)) return string.Empty;
             }
+            // PowerPointファイル(.pptx)の場合の特別処理 (追加)
+            // Special handling for PowerPoint files (.pptx).
+            else if (extension == ".pptx")
+            {
+                content = ReadPowerPointFile(filePath);
+                if (string.IsNullOrEmpty(content)) return string.Empty;
+            }
             else
             {
                 // 通常のテキストファイルとして読み込み
@@ -202,6 +210,7 @@ public class FileContentGenerator
             return string.Empty;
         }
     }
+
 
     /// <summary>
     /// Excelファイルを読み込み、マークダウン形式のテキストとして返します。
@@ -274,7 +283,7 @@ public class FileContentGenerator
                 {
                     // ドキュメント内の段落(Paragraph)を順番に抽出
                     // Sequentially extract paragraphs (Paragraph) in the document.
-                    foreach (var para in body.Descendants<Paragraph>())
+                    foreach (var para in body.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>())
                     {
                         sb.AppendLine(para.InnerText);
                     }
@@ -284,6 +293,60 @@ public class FileContentGenerator
         catch (Exception ex)
         {
             Console.WriteLine($"   [Warning] Could not read Word file '{Path.GetFileName(filePath)}': {ex.Message}");
+            return string.Empty;
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// PowerPointファイル(.pptx)を読み込み、スライドごとのテキストを抽出して返します。
+    /// Reads a PowerPoint file (.pptx) and returns extracted text per slide.
+    /// </summary>
+    private string ReadPowerPointFile(string filePath)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using (PresentationDocument presentationDoc = PresentationDocument.Open(filePath, false))
+            {
+                var presentationPart = presentationDoc.PresentationPart;
+                if (presentationPart != null && presentationPart.Presentation != null)
+                {
+                    var slideIdList = presentationPart.Presentation.SlideIdList;
+                    if (slideIdList != null)
+                    {
+                        int slideIndex = 1;
+                        // スライドを順番に処理
+                        foreach (SlideId slideId in slideIdList.Elements<SlideId>())
+                        {
+                            if (slideId.RelationshipId != null)
+                            {
+                                SlidePart slidePart = (SlidePart)presentationPart.GetPartById(slideId.RelationshipId.Value!);
+                                if (slidePart != null && slidePart.Slide != null)
+                                {
+                                    sb.AppendLine($"### Slide {slideIndex}");
+                                    
+                                    // スライド内のテキスト要素(Drawing.Text)をすべて抽出
+                                    foreach (var text in slidePart.Slide.Descendants<DocumentFormat.OpenXml.Drawing.Text>())
+                                    {
+                                        if (!string.IsNullOrWhiteSpace(text.Text))
+                                        {
+                                            sb.AppendLine(text.Text);
+                                        }
+                                    }
+                                    sb.AppendLine();
+                                }
+                            }
+                            slideIndex++;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   [Warning] Could not read PowerPoint file '{Path.GetFileName(filePath)}': {ex.Message}");
             return string.Empty;
         }
 
