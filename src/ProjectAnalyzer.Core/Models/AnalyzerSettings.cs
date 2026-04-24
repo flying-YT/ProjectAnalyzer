@@ -49,6 +49,11 @@ public class AnalyzerSettings
     public bool RemoveIndent { get; }
 
     /// <summary>
+    /// 画像ファイルに対するOCRを有効にするかどうか / Whether to enable OCR for image files.
+    /// </summary>
+    public bool EnableOcr { get; }
+
+    /// <summary>
     /// 一時的なクローンパス（Gitリポジトリの場合） / The temporary clone path (for Git repositories).
     /// </summary>
     public string? TempClonePath { get; }
@@ -66,7 +71,8 @@ public class AnalyzerSettings
     /// <param name="tempClonePath">一時クローンパス / Temporary clone path</param>
     /// <param name="sanitizeHtmlTags">HTMLタグ無害化フラグ / Sanitize HTML tags flag</param>
     /// <param name="removeIndent">インデント削除フラグ / Remove indent flag</param>
-    public AnalyzerSettings(string projectPath, string outputPath, ISet<string> ignoreList, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, string? tempClonePath = null, bool sanitizeHtmlTags = false, bool removeIndent = false)
+    /// <param name="enableOcr">OCR有効化フラグ / Enable OCR flag</param>
+    public AnalyzerSettings(string projectPath, string outputPath, ISet<string> ignoreList, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, string? tempClonePath = null, bool sanitizeHtmlTags = false, bool removeIndent = false, bool enableOcr = false)
     {
         ProjectPath = Path.GetFullPath(projectPath);
         OutputPath = string.IsNullOrWhiteSpace(outputPath) ? string.Empty : Path.GetFullPath(outputPath);
@@ -77,5 +83,6 @@ public class AnalyzerSettings
         TempClonePath = tempClonePath;
         SanitizeHtmlTags = sanitizeHtmlTags;
         RemoveIndent = removeIndent;
+        EnableOcr = enableOcr;
     }
 }

@@ -8,8 +8,10 @@ using System.Text.RegularExpressions;
 using ExcelDataReader;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using DocumentFormat.OpenXml.Presentation;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Utils;
+using Tesseract;
 
 namespace ProjectAnalyzer.Core.Generators;
 
@@ -140,13 +142,28 @@ public class FileContentGenerator
             if (extension == ".xlsx" || extension == ".xls" || extension == ".xlsm")
             {
                 content = ReadExcelFile(filePath);
-                if (string.IsNullOrEmpty(content)) return string.Empty; // 読み込めなかった場合は空文字
+                if (extension == ".xlsx" || extension == ".xlsm")
+                {
+                    // ★ メソッド名を変更し、画像OCRも実行させる
+                    string shapesText = ExtractExcelShapesAndImagesText(filePath);
+                    if (!string.IsNullOrWhiteSpace(shapesText))
+                    {
+                        content += "\n### [Shapes, TextBoxes & Images]\n" + shapesText;
+                    }
+                }
             }
             // Wordファイル(.docx)の場合の特別処理
             // Special handling for Word files (.docx).
             else if (extension == ".docx")
             {
                 content = ReadWordFile(filePath);
+                if (string.IsNullOrEmpty(content)) return string.Empty;
+            }
+            // PowerPointファイル(.pptx)の場合の特別処理 (追加)
+            // Special handling for PowerPoint files (.pptx).
+            else if (extension == ".pptx")
+            {
+                content = ReadPowerPointFile(filePath);
                 if (string.IsNullOrEmpty(content)) return string.Empty;
             }
             else
@@ -203,11 +220,12 @@ public class FileContentGenerator
         }
     }
 
+
     /// <summary>
     /// Excelファイルを読み込み、マークダウン形式のテキストとして返します。
     /// Reads an Excel file and returns it as Markdown formatted text.
     /// </summary>
-    private string ReadExcelFile(string filePath)
+   private string ReadExcelFile(string filePath)
     {
         var sb = new StringBuilder();
         
@@ -259,6 +277,168 @@ public class FileContentGenerator
     }
 
     /// <summary>
+    /// Excelファイル(.xlsx, .xlsm)から図形やテキストボックスの文字、および埋め込み画像のOCRテキストを抽出します。(デバッグ出力版)
+    /// </summary>
+    private string ExtractExcelShapesAndImagesText(string filePath)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using (SpreadsheetDocument doc = SpreadsheetDocument.Open(filePath, false))
+            {
+                if (doc.WorkbookPart?.WorksheetParts == null) return string.Empty;
+                
+                int imageCount = 1;
+
+                foreach (var sheetPart in doc.WorkbookPart.WorksheetParts)
+                {
+                    if (sheetPart.DrawingsPart != null)
+                    {
+                        // 1. 図形やテキストボックス内の文字データを抽出
+                        foreach (var text in sheetPart.DrawingsPart.WorksheetDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Text>())
+                        {
+                            if (!string.IsNullOrWhiteSpace(text.Text)) sb.AppendLine(text.Text);
+                        }
+
+                        // 2. 埋め込み画像の存在チェックとOCR
+                        if (sheetPart.DrawingsPart.ImageParts != null && sheetPart.DrawingsPart.ImageParts.Any())
+                        {
+                            if (!_settings.EnableOcr)
+                            {
+                                sb.AppendLine($"\n--- ⚠️ 画像が見つかりましたが、OCRが無効(--enable-ocrなし)のためスキップしました ---");
+                                continue;
+                            }
+
+                            foreach (var imagePart in sheetPart.DrawingsPart.ImageParts)
+                            {
+                                // 共通のOCR処理メソッドを呼び出し
+                                sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"\n[Excel Extract Error: {ex.Message}]");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Tesseractを使用して画像からテキストを抽出します。
+    /// </summary>
+    private string ReadImageTextWithOcr(string filePath)
+    {
+        try
+        {
+            // まずは Tesseract.NET (Windows環境など) での実行を試す
+            string tessDataPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tessdata");
+            
+            if (Directory.Exists(tessDataPath))
+            {
+                using (var engine = new TesseractEngine(tessDataPath, "jpn+eng", EngineMode.Default))
+                using (var img = Pix.LoadFromFile(filePath))
+                using (var page = engine.Process(img))
+                {
+                    return page.GetText().Trim();
+                }
+            }
+            return ReadImageTextWithCommandLine(filePath);
+        }
+        catch
+        {
+            // ネイティブDLLの読み込みエラー等(Linux環境)が発生した場合はOSのコマンドにフォールバックする
+            return ReadImageTextWithCommandLine(filePath);
+        }
+    }
+
+    /// <summary>
+    /// OSにインストールされている Tesseract コマンドを直接呼び出してOCRを実行します。(Linux向けフォールバック)
+    /// </summary>
+    private string ReadImageTextWithCommandLine(string filePath)
+    {
+        try
+        {
+            // tesseractコマンドの出力先(拡張子.txtが自動で付くため拡張子なしのパスを指定)
+            string tempOutputFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            
+            // コマンド引数: [入力画像パス] [出力テキストパス] -l jpn+eng
+            var processInfo = new System.Diagnostics.ProcessStartInfo("tesseract", $"\"{filePath}\" \"{tempOutputFile}\" -l jpn+eng")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(processInfo);
+            process?.WaitForExit();
+
+            string resultFilePath = tempOutputFile + ".txt";
+            
+            if (File.Exists(resultFilePath))
+            {
+                string text = File.ReadAllText(resultFilePath);
+                File.Delete(resultFilePath); // 読み終わった一時ファイルを削除
+                return text.Trim();
+            }
+            
+            string error = process?.StandardError.ReadToEnd() ?? "Unknown error";
+            return $"[OCR Command Error: {error}]";
+        }
+        catch (Exception ex)
+        {
+            return $"[OCR Fallback Error: {ex.Message}]";
+        }
+    }
+
+    /// <summary>
+    /// 画像パーツからOCRテキストを抽出する共通メソッドです。
+    /// A common method to extract OCR text from an image part.
+    /// </summary>
+    private string ProcessImagePartOcr(DocumentFormat.OpenXml.Packaging.ImagePart imagePart, ref int imageCount)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using (var stream = imagePart.GetStream())
+            using (var ms = new MemoryStream())
+            {
+                stream.CopyTo(ms);
+                byte[] imageBytes = ms.ToArray();
+                
+                // 拡張子がないとOCRエンジン(Leptonica)が画像フォーマットを誤認するため明示的に付与
+                string tempFilePath = Path.GetTempFileName();
+                string ext = imagePart.ContentType.Contains("jpeg") ? ".jpg" : ".png";
+                string newTempFilePath = tempFilePath + ext;
+                
+                // .tmpファイルをリネームしてから書き込む
+                File.Move(tempFilePath, newTempFilePath);
+                File.WriteAllBytes(newTempFilePath, imageBytes);
+                
+                // OCR実行 (このメソッド内でネイティブDLLエラー時のフォールバックが考慮されています)
+                string ocrText = ReadImageTextWithOcr(newTempFilePath);
+                
+                // デバッグのため、エラーでも空でも強制的に出力する
+                sb.AppendLine($"\n--- Embedded Image {imageCount} (ContentType: {imagePart.ContentType}) ---");
+                sb.AppendLine(string.IsNullOrWhiteSpace(ocrText) ? "[No Text Found]" : ocrText);
+                
+                if (File.Exists(newTempFilePath)) File.Delete(newTempFilePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"\n--- Embedded Image {imageCount} Error ---");
+            sb.AppendLine(ex.Message);
+        }
+        
+        imageCount++;
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Wordファイル(.docx)を読み込み、プレーンテキストとして返します。
     /// Reads a Word file (.docx) and returns it as plain text.
     /// </summary>
@@ -274,9 +454,21 @@ public class FileContentGenerator
                 {
                     // ドキュメント内の段落(Paragraph)を順番に抽出
                     // Sequentially extract paragraphs (Paragraph) in the document.
-                    foreach (var para in body.Descendants<Paragraph>())
+                    foreach (var para in body.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>())
                     {
                         sb.AppendLine(para.InnerText);
+                    }
+                }
+
+                // 埋め込み画像の存在チェックとOCR
+                if (_settings.EnableOcr && wordDoc.MainDocumentPart?.ImageParts != null && wordDoc.MainDocumentPart.ImageParts.Any())
+                {
+                    sb.AppendLine("\n### [Embedded Images]");
+                    int imageCount = 1;
+                    foreach (var imagePart in wordDoc.MainDocumentPart.ImageParts)
+                    {
+                        // 共通のOCR処理メソッドを呼び出し
+                        sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
                     }
                 }
             }
@@ -284,6 +476,73 @@ public class FileContentGenerator
         catch (Exception ex)
         {
             Console.WriteLine($"   [Warning] Could not read Word file '{Path.GetFileName(filePath)}': {ex.Message}");
+            return string.Empty;
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// PowerPointファイル(.pptx)を読み込み、スライドごとのテキストを抽出して返します。
+    /// Reads a PowerPoint file (.pptx) and returns extracted text per slide.
+    /// </summary>
+    private string ReadPowerPointFile(string filePath)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using (PresentationDocument presentationDoc = PresentationDocument.Open(filePath, false))
+            {
+                var presentationPart = presentationDoc.PresentationPart;
+                if (presentationPart != null && presentationPart.Presentation != null)
+                {
+                    var slideIdList = presentationPart.Presentation.SlideIdList;
+                    if (slideIdList != null)
+                    {
+                        int slideIndex = 1;
+                        int imageCount = 1; // プレゼンテーション全体で画像番号を連番にする
+
+                        // スライドを順番に処理
+                        foreach (SlideId slideId in slideIdList.Elements<SlideId>())
+                        {
+                            if (slideId.RelationshipId != null)
+                            {
+                                SlidePart slidePart = (SlidePart)presentationPart.GetPartById(slideId.RelationshipId.Value!);
+                                if (slidePart != null && slidePart.Slide != null)
+                                {
+                                    sb.AppendLine($"### Slide {slideIndex}");
+                                    
+                                    // スライド内のテキスト要素(Drawing.Text)をすべて抽出
+                                    foreach (var text in slidePart.Slide.Descendants<DocumentFormat.OpenXml.Drawing.Text>())
+                                    {
+                                        if (!string.IsNullOrWhiteSpace(text.Text))
+                                        {
+                                            sb.AppendLine(text.Text);
+                                        }
+                                    }
+
+                                    // 埋め込み画像の存在チェックとOCR
+                                    if (_settings.EnableOcr && slidePart.ImageParts != null && slidePart.ImageParts.Any())
+                                    {
+                                        foreach (var imagePart in slidePart.ImageParts)
+                                        {
+                                            // 共通のOCR処理メソッドを呼び出し
+                                            sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
+                                        }
+                                    }
+
+                                    sb.AppendLine();
+                                }
+                            }
+                            slideIndex++;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   [Warning] Could not read PowerPoint file '{Path.GetFileName(filePath)}': {ex.Message}");
             return string.Empty;
         }
 

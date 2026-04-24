@@ -1,10 +1,15 @@
 ﻿# **Project Analyzer**
 
+[![NuGet Version](https://img.shields.io/nuget/v/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
+
 ## **概要**
 
 **Project Analyzer** は、指定されたプロジェクトフォルダ**またはGitHubリポジトリ**の構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいように、Markdownファイルとして出力する.NET製のコマンドラインツールおよびクラスライブラリです。
 
 主に**Githubのリポジトリ**や**自作のプロジェクトフォルダ**を**NotebookLM**などのAIツールのソースとして使う際に活用できます。
+
+さらに、ソースコードだけでなく**WordやExcel、PowerPointなどのOfficeソフトのファイル読み込みにも対応**しており、仕様書や設計データも含めたプロジェクト全体のコンテキストをAIに提供することが可能です。
 
 ## **主な機能**
 
@@ -19,6 +24,33 @@
 ## **必要なもの**
 
 * **.NET ランタイム または SDK** (バージョン 6.0 以降 / 開発やソースコードからの実行にはSDKが必要です)
+
+### 📷 OCR機能（--enable-ocr）を利用するための事前準備
+
+画像内の文字抽出を行う `--enable-ocr` オプションを利用する場合、実行するOS環境によってはTesseractエンジンの事前インストールが必要です。
+
+#### 1. OSごとの必須要件
+
+**🪟 Windows 環境**
+* OS側への追加インストールは不要です。NuGetパッケージに含まれるライブラリで自動的に動作します。
+
+**🐧 Linux (Ubuntu / Debian) 環境**
+* OCRエンジン本体と日本語データのインストールが必要です。ターミナルで以下のコマンドを実行してください。
+  ```bash
+  sudo apt-get update
+  sudo apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-jpn
+
+**🍎 macOS 環境**
+* Homebrewを使用してTesseract本体と多言語データをインストールしてください。
+  ```bash
+  brew install tesseract tesseract-lang
+
+#### 2. 学習済みデータ (tessdata) の配置について
+ソースコードからビルド・実行する場合は、実行ディレクトリ（または src/ProjectAnalyzer.Core/）に tessdata フォルダを作成し、以下の学習済みモデルを配置してください。
+* [jpn.traineddata (日本語)](https://github.com/tesseract-ocr/tessdata/blob/main/jpn.traineddata)
+* [eng.traineddata (英語)](https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata)
+
+※Linux/macOS環境でネイティブライブラリの読み込みに失敗した場合は、自動的にOSにインストールされた tesseract コマンドを使用するフォールバック機能が作動します。
 
 ## **使い方**
 

@@ -28,7 +28,7 @@ public static class SettingsLoader
     /// <param name="sanitizeHtmlTags">HTMLタグを置換するかどうかのフラグ。/ A flag indicating whether to sanitize HTML tags.</param>
     /// <param name="removeIndent">インデントを削除するかどうかのフラグ。/ A flag indicating whether to remove indents.</param>
     /// <returns>読み込まれた設定情報を含む `AnalyzerSettings` インスタンス。/ An `AnalyzerSettings` instance containing the loaded configuration.</returns>
-    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, bool sanitizeHtmlTags = false, bool removeIndent = false)   
+    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, bool sanitizeHtmlTags = false, bool removeIndent = false, bool enableOcr = false)   
     {
         string targetPath = projectPath;
         string? tempCloneDir = null;
@@ -144,6 +144,6 @@ public static class SettingsLoader
             }
         }
 
-        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir, sanitizeHtmlTags, removeIndent);
+        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir, sanitizeHtmlTags, removeIndent, enableOcr);
     }
 }
