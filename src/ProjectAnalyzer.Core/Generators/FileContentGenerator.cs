@@ -276,7 +276,7 @@ public class FileContentGenerator
         return sb.ToString();
     }
 
-/// <summary>
+    /// <summary>
     /// Excelファイル(.xlsx, .xlsm)から図形やテキストボックスの文字、および埋め込み画像のOCRテキストを抽出します。(デバッグ出力版)
     /// </summary>
     private string ExtractExcelShapesAndImagesText(string filePath)
@@ -311,41 +311,8 @@ public class FileContentGenerator
 
                             foreach (var imagePart in sheetPart.DrawingsPart.ImageParts)
                             {
-                                try
-                                {
-                                    using (var stream = imagePart.GetStream())
-                                    using (var ms = new MemoryStream())
-                                    {
-                                        stream.CopyTo(ms);
-                                        byte[] imageBytes = ms.ToArray();
-                                        
-                                        // 拡張子がないとOCRエンジン(Leptonica)が画像フォーマットを誤認するため明示的に付与
-                                        string tempFilePath = Path.GetTempFileName();
-                                        string ext = imagePart.ContentType.Contains("jpeg") ? ".jpg" : ".png";
-                                        string newTempFilePath = tempFilePath + ext;
-                                        
-                                        // .tmpファイルをリネームしてから書き込む
-                                        File.Move(tempFilePath, newTempFilePath);
-                                        File.WriteAllBytes(newTempFilePath, imageBytes);
-                                        
-                                        // OCR実行
-                                        string ocrText = ReadImageTextWithOcr(newTempFilePath);
-                                        
-                                        // デバッグのため、エラーでも空でも強制的に出力する
-                                        sb.AppendLine($"\n--- Embedded Image {imageCount} (ContentType: {imagePart.ContentType}) ---");
-                                        sb.AppendLine(string.IsNullOrWhiteSpace(ocrText) ? "[No Text Found]" : ocrText);
-                                        
-                                        imageCount++;
-                                        
-                                        if (File.Exists(newTempFilePath)) File.Delete(newTempFilePath);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    sb.AppendLine($"\n--- Embedded Image {imageCount} Error ---");
-                                    sb.AppendLine(ex.Message);
-                                    imageCount++;
-                                }
+                                // 共通のOCR処理メソッドを呼び出し
+                                sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
                             }
                         }
                     }
@@ -428,6 +395,50 @@ public class FileContentGenerator
     }
 
     /// <summary>
+    /// 画像パーツからOCRテキストを抽出する共通メソッドです。
+    /// A common method to extract OCR text from an image part.
+    /// </summary>
+    private string ProcessImagePartOcr(DocumentFormat.OpenXml.Packaging.ImagePart imagePart, ref int imageCount)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using (var stream = imagePart.GetStream())
+            using (var ms = new MemoryStream())
+            {
+                stream.CopyTo(ms);
+                byte[] imageBytes = ms.ToArray();
+                
+                // 拡張子がないとOCRエンジン(Leptonica)が画像フォーマットを誤認するため明示的に付与
+                string tempFilePath = Path.GetTempFileName();
+                string ext = imagePart.ContentType.Contains("jpeg") ? ".jpg" : ".png";
+                string newTempFilePath = tempFilePath + ext;
+                
+                // .tmpファイルをリネームしてから書き込む
+                File.Move(tempFilePath, newTempFilePath);
+                File.WriteAllBytes(newTempFilePath, imageBytes);
+                
+                // OCR実行 (このメソッド内でネイティブDLLエラー時のフォールバックが考慮されています)
+                string ocrText = ReadImageTextWithOcr(newTempFilePath);
+                
+                // デバッグのため、エラーでも空でも強制的に出力する
+                sb.AppendLine($"\n--- Embedded Image {imageCount} (ContentType: {imagePart.ContentType}) ---");
+                sb.AppendLine(string.IsNullOrWhiteSpace(ocrText) ? "[No Text Found]" : ocrText);
+                
+                if (File.Exists(newTempFilePath)) File.Delete(newTempFilePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"\n--- Embedded Image {imageCount} Error ---");
+            sb.AppendLine(ex.Message);
+        }
+        
+        imageCount++;
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Wordファイル(.docx)を読み込み、プレーンテキストとして返します。
     /// Reads a Word file (.docx) and returns it as plain text.
     /// </summary>
@@ -446,6 +457,18 @@ public class FileContentGenerator
                     foreach (var para in body.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>())
                     {
                         sb.AppendLine(para.InnerText);
+                    }
+                }
+
+                // 埋め込み画像の存在チェックとOCR
+                if (_settings.EnableOcr && wordDoc.MainDocumentPart?.ImageParts != null && wordDoc.MainDocumentPart.ImageParts.Any())
+                {
+                    sb.AppendLine("\n### [Embedded Images]");
+                    int imageCount = 1;
+                    foreach (var imagePart in wordDoc.MainDocumentPart.ImageParts)
+                    {
+                        // 共通のOCR処理メソッドを呼び出し
+                        sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
                     }
                 }
             }
@@ -477,6 +500,8 @@ public class FileContentGenerator
                     if (slideIdList != null)
                     {
                         int slideIndex = 1;
+                        int imageCount = 1; // プレゼンテーション全体で画像番号を連番にする
+
                         // スライドを順番に処理
                         foreach (SlideId slideId in slideIdList.Elements<SlideId>())
                         {
@@ -495,6 +520,17 @@ public class FileContentGenerator
                                             sb.AppendLine(text.Text);
                                         }
                                     }
+
+                                    // 埋め込み画像の存在チェックとOCR
+                                    if (_settings.EnableOcr && slidePart.ImageParts != null && slidePart.ImageParts.Any())
+                                    {
+                                        foreach (var imagePart in slidePart.ImageParts)
+                                        {
+                                            // 共通のOCR処理メソッドを呼び出し
+                                            sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
+                                        }
+                                    }
+
                                     sb.AppendLine();
                                 }
                             }

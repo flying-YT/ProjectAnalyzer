@@ -42,10 +42,11 @@
   ```bash
   brew install tesseract tesseract-lang
 
-#### 学習済みデータ (tessdata) の配置について
+#### 2. 学習済みデータ (tessdata) の配置について
 ソースコードからビルド・実行する場合は、実行ディレクトリ（または src/ProjectAnalyzer.Core/）に tessdata フォルダを作成し、以下の学習済みモデルを配置してください。
 * [jpn.traineddata (日本語)](https://github.com/tesseract-ocr/tessdata/blob/main/jpn.traineddata)
 * [eng.traineddata (英語)](https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata)
+
 ※Linux/macOS環境でネイティブライブラリの読み込みに失敗した場合は、自動的にOSにインストールされた tesseract コマンドを使用するフォールバック機能が作動します。
 
 ## **使い方**

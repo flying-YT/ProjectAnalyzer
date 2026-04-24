@@ -42,10 +42,11 @@ When using the `--enable-ocr` option to extract text from images, you may need t
   ```bash
   brew install tesseract tesseract-lang
 
-#### Placing Trained Data (tessdata)
+#### 2. Placing Trained Data (tessdata)
 If you are building and running from source, create a tessdata folder in your execution directory (or src/ProjectAnalyzer.Core/) and place the following trained models inside:
 * [jpn.traineddata (Japanese)](https://github.com/tesseract-ocr/tessdata/blob/main/jpn.traineddata)
 * [eng.traineddata (English)](https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata)
+
 Note: If the native library fails to load on Linux/macOS, a fallback mechanism will automatically activate and use the system-installed tesseract command.
 
 ## **Usage**
