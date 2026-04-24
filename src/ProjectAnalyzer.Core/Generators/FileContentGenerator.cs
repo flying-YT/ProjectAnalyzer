@@ -11,6 +11,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentFormat.OpenXml.Presentation;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Utils;
+using Tesseract;
 
 namespace ProjectAnalyzer.Core.Generators;
 
@@ -141,7 +142,15 @@ public class FileContentGenerator
             if (extension == ".xlsx" || extension == ".xls" || extension == ".xlsm")
             {
                 content = ReadExcelFile(filePath);
-                if (string.IsNullOrEmpty(content)) return string.Empty; // 読み込めなかった場合は空文字
+                if (extension == ".xlsx" || extension == ".xlsm")
+                {
+                    // ★ メソッド名を変更し、画像OCRも実行させる
+                    string shapesText = ExtractExcelShapesAndImagesText(filePath);
+                    if (!string.IsNullOrWhiteSpace(shapesText))
+                    {
+                        content += "\n### [Shapes, TextBoxes & Images]\n" + shapesText;
+                    }
+                }
             }
             // Wordファイル(.docx)の場合の特別処理
             // Special handling for Word files (.docx).
@@ -216,7 +225,7 @@ public class FileContentGenerator
     /// Excelファイルを読み込み、マークダウン形式のテキストとして返します。
     /// Reads an Excel file and returns it as Markdown formatted text.
     /// </summary>
-    private string ReadExcelFile(string filePath)
+   private string ReadExcelFile(string filePath)
     {
         var sb = new StringBuilder();
         
@@ -265,6 +274,157 @@ public class FileContentGenerator
         }
 
         return sb.ToString();
+    }
+
+/// <summary>
+    /// Excelファイル(.xlsx, .xlsm)から図形やテキストボックスの文字、および埋め込み画像のOCRテキストを抽出します。(デバッグ出力版)
+    /// </summary>
+    private string ExtractExcelShapesAndImagesText(string filePath)
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            using (SpreadsheetDocument doc = SpreadsheetDocument.Open(filePath, false))
+            {
+                if (doc.WorkbookPart?.WorksheetParts == null) return string.Empty;
+                
+                int imageCount = 1;
+
+                foreach (var sheetPart in doc.WorkbookPart.WorksheetParts)
+                {
+                    if (sheetPart.DrawingsPart != null)
+                    {
+                        // 1. 図形やテキストボックス内の文字データを抽出
+                        foreach (var text in sheetPart.DrawingsPart.WorksheetDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Text>())
+                        {
+                            if (!string.IsNullOrWhiteSpace(text.Text)) sb.AppendLine(text.Text);
+                        }
+
+                        // 2. 埋め込み画像の存在チェックとOCR
+                        if (sheetPart.DrawingsPart.ImageParts != null && sheetPart.DrawingsPart.ImageParts.Any())
+                        {
+                            if (!_settings.EnableOcr)
+                            {
+                                sb.AppendLine($"\n--- ⚠️ 画像が見つかりましたが、OCRが無効(--enable-ocrなし)のためスキップしました ---");
+                                continue;
+                            }
+
+                            foreach (var imagePart in sheetPart.DrawingsPart.ImageParts)
+                            {
+                                try
+                                {
+                                    using (var stream = imagePart.GetStream())
+                                    using (var ms = new MemoryStream())
+                                    {
+                                        stream.CopyTo(ms);
+                                        byte[] imageBytes = ms.ToArray();
+                                        
+                                        // 拡張子がないとOCRエンジン(Leptonica)が画像フォーマットを誤認するため明示的に付与
+                                        string tempFilePath = Path.GetTempFileName();
+                                        string ext = imagePart.ContentType.Contains("jpeg") ? ".jpg" : ".png";
+                                        string newTempFilePath = tempFilePath + ext;
+                                        
+                                        // .tmpファイルをリネームしてから書き込む
+                                        File.Move(tempFilePath, newTempFilePath);
+                                        File.WriteAllBytes(newTempFilePath, imageBytes);
+                                        
+                                        // OCR実行
+                                        string ocrText = ReadImageTextWithOcr(newTempFilePath);
+                                        
+                                        // デバッグのため、エラーでも空でも強制的に出力する
+                                        sb.AppendLine($"\n--- Embedded Image {imageCount} (ContentType: {imagePart.ContentType}) ---");
+                                        sb.AppendLine(string.IsNullOrWhiteSpace(ocrText) ? "[No Text Found]" : ocrText);
+                                        
+                                        imageCount++;
+                                        
+                                        if (File.Exists(newTempFilePath)) File.Delete(newTempFilePath);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    sb.AppendLine($"\n--- Embedded Image {imageCount} Error ---");
+                                    sb.AppendLine(ex.Message);
+                                    imageCount++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"\n[Excel Extract Error: {ex.Message}]");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Tesseractを使用して画像からテキストを抽出します。
+    /// </summary>
+    private string ReadImageTextWithOcr(string filePath)
+    {
+        try
+        {
+            // まずは Tesseract.NET (Windows環境など) での実行を試す
+            string tessDataPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tessdata");
+            
+            if (Directory.Exists(tessDataPath))
+            {
+                using (var engine = new TesseractEngine(tessDataPath, "jpn+eng", EngineMode.Default))
+                using (var img = Pix.LoadFromFile(filePath))
+                using (var page = engine.Process(img))
+                {
+                    return page.GetText().Trim();
+                }
+            }
+            return ReadImageTextWithCommandLine(filePath);
+        }
+        catch
+        {
+            // ネイティブDLLの読み込みエラー等(Linux環境)が発生した場合はOSのコマンドにフォールバックする
+            return ReadImageTextWithCommandLine(filePath);
+        }
+    }
+
+    /// <summary>
+    /// OSにインストールされている Tesseract コマンドを直接呼び出してOCRを実行します。(Linux向けフォールバック)
+    /// </summary>
+    private string ReadImageTextWithCommandLine(string filePath)
+    {
+        try
+        {
+            // tesseractコマンドの出力先(拡張子.txtが自動で付くため拡張子なしのパスを指定)
+            string tempOutputFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            
+            // コマンド引数: [入力画像パス] [出力テキストパス] -l jpn+eng
+            var processInfo = new System.Diagnostics.ProcessStartInfo("tesseract", $"\"{filePath}\" \"{tempOutputFile}\" -l jpn+eng")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(processInfo);
+            process?.WaitForExit();
+
+            string resultFilePath = tempOutputFile + ".txt";
+            
+            if (File.Exists(resultFilePath))
+            {
+                string text = File.ReadAllText(resultFilePath);
+                File.Delete(resultFilePath); // 読み終わった一時ファイルを削除
+                return text.Trim();
+            }
+            
+            string error = process?.StandardError.ReadToEnd() ?? "Unknown error";
+            return $"[OCR Command Error: {error}]";
+        }
+        catch (Exception ex)
+        {
+            return $"[OCR Fallback Error: {ex.Message}]";
+        }
     }
 
     /// <summary>

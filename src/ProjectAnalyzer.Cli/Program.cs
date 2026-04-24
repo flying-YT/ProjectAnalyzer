@@ -16,6 +16,7 @@ bool omitCodeBlockTicks = args.Contains("--no-codeblock");
 bool outputPerFile = args.Contains("--per-file");
 bool sanitizeHtmlTags = args.Contains("--sanitize-html");
 bool removeIndent = args.Contains("--remove-indent");
+bool enableOcr = args.Contains("--enable-ocr");
 
 // 2. フラグ（"--" で始まるもの）以外の引数をパスとして抽出する
 var pathArgs = args.Where(a => !a.StartsWith("--")).ToArray();
@@ -37,7 +38,8 @@ try
         omitCodeBlockTicks: omitCodeBlockTicks,
         outputPerFile: outputPerFile,
         sanitizeHtmlTags: sanitizeHtmlTags,
-        removeIndent: removeIndent // 設定に追加
+        removeIndent: removeIndent,
+        enableOcr: enableOcr
     );
 
     Console.WriteLine("--- Project Analyzer ---");

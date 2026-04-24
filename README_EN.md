@@ -22,6 +22,32 @@ Furthermore, it supports reading not only source code but also **Office software
 
 * **.NET Runtime or SDK** (version 6.0 or later / SDK is required for development or running from source code)
 
+### 📷 Prerequisites for the OCR Feature (--enable-ocr)
+
+When using the `--enable-ocr` option to extract text from images, you may need to pre-install the Tesseract engine depending on your operating system.
+
+#### 1. OS-Specific Requirements
+
+**🪟 Windows**
+* No additional OS-level installation is required. It works automatically using the libraries included in the NuGet package.
+
+**🐧 Linux (Ubuntu / Debian)**
+* You need to install the core OCR engine and Japanese language data. Run the following commands in your terminal:
+  ```bash
+  sudo apt-get update
+  sudo apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-jpn
+
+**🍎 macOS**
+* Use Homebrew to install Tesseract and its language data:
+  ```bash
+  brew install tesseract tesseract-lang
+
+#### Placing Trained Data (tessdata)
+If you are building and running from source, create a tessdata folder in your execution directory (or src/ProjectAnalyzer.Core/) and place the following trained models inside:
+* [jpn.traineddata (Japanese)](https://github.com/tesseract-ocr/tessdata/blob/main/jpn.traineddata)
+* [eng.traineddata (English)](https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata)
+Note: If the native library fails to load on Linux/macOS, a fallback mechanism will automatically activate and use the system-installed tesseract command.
+
 ## **Usage**
 
 ### **1. Setup**
