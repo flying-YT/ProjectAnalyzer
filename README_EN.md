@@ -1,5 +1,8 @@
 # **Project Analyzer**
 
+[![NuGet Version](https://img.shields.io/nuget/v/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
+
 ## **Overview**
 
 **Project Analyzer** is a .NET-based command-line tool and class library that analyzes the structure and content of a specified project folder **or GitHub repository** and outputs it as a Markdown file, making it easily consumable as context for AI (LLMs).
