@@ -94,6 +94,7 @@ dist
 * `--sanitize-html`: NotebookLMなどでコード内のHTMLタグが誤動作するのを防ぐため、&lt;details> などのタグを ＜details＞ に置換して出力します。ソースコード内の if (a < b) などは影響を受けません。
 * `--remove-indent`: 行頭にあるインデント（スペースやタブ）をすべて削除します。インデントによるMarkdownコードブロックの誤解釈を防ぐために利用します（※Pythonなどインデントに意味がある言語の構造が壊れる可能性があるため注意してください）。
 * `--per-file`: ファイルごとに個別のMarkdownファイルを出力します。
+* `--enable-ocr`: このオプションを利用することで、Officeファイル内の画像もOCRを用いてテキストとして抽出することが可能になります。
 
 *   **A. EXEファイルから実行する場合 (Windows)**
 
@@ -231,3 +232,5 @@ foreach (var context in result.ProjectContexts)
 
 * **[ExcelDataReader](https://github.com/ExcelDataReader/ExcelDataReader)** (MIT License)
 * **[DocumentFormat.OpenXml](https://github.com/dotnet/Open-XML-SDK)** (MIT License)
+* **[Tesseract](https://github.com/charlesw/tesseract/)** (Apache License 2.0)
+* **[tessdata](https://github.com/tesseract-ocr/tessdata)** (Apache License 2.0)
