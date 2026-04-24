@@ -94,6 +94,7 @@ If no arguments are provided, the current directory will be analyzed, and the re
 * `--sanitize-html`: Replaces tags like `<details>` with `＜details＞` to prevent HTML tags in the code from malfunctioning in tools like NotebookLM. Syntax in source code like `if (a < b)` is not affected.
 * `--remove-indent`: Removes all leading indentation (spaces or tabs). Used to prevent misinterpretation of Markdown code blocks due to indentation (*Note: Be careful as this may break the structure of languages where indentation is meaningful, like Python*).
 * `--per-file`: Outputs individual Markdown files for each analyzed file.
+* `--enable-ocr`: Enables text extraction from images within Office files using OCR.
 
 *   **A. Running from the EXE file (Windows)**
 
@@ -231,3 +232,5 @@ This project is released under the **MIT License**.
 
 * **ExcelDataReader** (MIT License)
 * **DocumentFormat.OpenXml** (MIT License)
+* **Tesseract** (Apache License 2.0)
+* **tessdata** (Apache License 2.0)
