@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
 
     <PackageId>ProjectAnalyzer.Core</PackageId>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <Authors>flying-YT</Authors>
     <Description>指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。ExcelやWordにも対応しています。</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
