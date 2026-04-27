@@ -52,6 +52,10 @@ If you are building and running from source, create a tessdata folder in your ex
 
 Note: If the native library fails to load on Linux/macOS, a fallback mechanism will automatically activate and use the system-installed tesseract command.
 
+## **⚠️ Limitations**
+
+This library uses Tesseract for OCR processing, which requires physical native DLLs (e.g., x64/) and trained data (tessdata/) at runtime. Therefore, it does not support .NET's single-file deployment (PublishSingleFile=true). When building or publishing, please use the standard format (which outputs multiple files).
+
 ## **Usage**
 
 ### **1. Setup**
