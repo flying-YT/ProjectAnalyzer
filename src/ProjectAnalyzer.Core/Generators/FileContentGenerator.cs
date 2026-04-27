@@ -333,9 +333,10 @@ public class FileContentGenerator
     {
         try
         {
-            string exeDirectory = Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName);
-            string tessDataPath = Path.Combine(exeDirectory, "tessdata");
-            
+            // 実行されているアプリケーションのベースディレクトリ（dllやexeが展開されている場所）を取得
+            string baseDir = AppContext.BaseDirectory;
+            string tessDataPath = Path.Combine(baseDir, "tessdata");     
+
             if (Directory.Exists(tessDataPath))
             {
                 using (var engine = new TesseractEngine(tessDataPath, "jpn+eng", EngineMode.Default))
