@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
 
     <PackageId>ProjectAnalyzer.Core</PackageId>
-    <Version>1.2.2</Version>
+    <Version>1.2.3</Version>
     <Authors>flying-YT</Authors>
     <Description>指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。ExcelやWordにも対応しています。</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -26,21 +26,25 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <PackageCopyToOutput>true</PackageCopyToOutput>
     </Content>
-
-    <Content Include="x64\**\*">
-      <Pack>true</Pack>
-      <PackagePath>contentFiles\any\any\x64;content\x64</PackagePath>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <PackageCopyToOutput>true</PackageCopyToOutput>
-    </Content>
-
-    <Content Include="x86\**\*">
-      <Pack>true</Pack>
-      <PackagePath>contentFiles\any\any\x86;content\x86</PackagePath>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <PackageCopyToOutput>true</PackageCopyToOutput>
-    </Content>
   </ItemGroup>
+
+  <Target Name="AddNativeDllsToPackage" BeforeTargets="_GetPackageFiles">
+    <ItemGroup>
+      <Content Include="$(TargetDir)x64\**\*">
+        <Pack>true</Pack>
+        <PackagePath>contentFiles\any\any\x64;content\x64</PackagePath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PackageCopyToOutput>true</PackageCopyToOutput>
+      </Content>
+
+      <Content Include="$(TargetDir)x86\**\*">
+        <Pack>true</Pack>
+        <PackagePath>contentFiles\any\any\x86;content\x86</PackagePath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <PackageCopyToOutput>true</PackageCopyToOutput>
+      </Content>
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.4.1" />
