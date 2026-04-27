@@ -20,14 +20,22 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- tessdataフォルダ内の全ファイルを対象にする -->
     <None Update="tessdata\**\*">
-      <!-- ビルド時に出力ディレクトリ（bin/Debug等）にコピーする -->
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <!-- NuGetパッケージに含める -->
       <Pack>true</Pack>
-      <!-- パッケージを利用する側のプロジェクトの出力先にも展開されるようにする -->
       <PackagePath>contentFiles\any\any\tessdata;content\tessdata</PackagePath>
+    </None>
+
+    <None Update="x64\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>true</Pack>
+      <PackagePath>contentFiles\any\any\x64;content\x64</PackagePath>
+    </None>
+
+    <None Update="x86\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>true</Pack>
+      <PackagePath>contentFiles\any\any\x86;content\x86</PackagePath>
     </None>
   </ItemGroup>
 
