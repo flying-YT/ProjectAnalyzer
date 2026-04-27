@@ -333,8 +333,8 @@ public class FileContentGenerator
     {
         try
         {
-            // まずは Tesseract.NET (Windows環境など) での実行を試す
-            string tessDataPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tessdata");
+            string exeDirectory = Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName);
+            string tessDataPath = Path.Combine(exeDirectory, "tessdata");
             
             if (Directory.Exists(tessDataPath))
             {
@@ -342,14 +342,18 @@ public class FileContentGenerator
                 using (var img = Pix.LoadFromFile(filePath))
                 using (var page = engine.Process(img))
                 {
-                    return page.GetText().Trim();
+                    string text = page.GetText().Trim();
+                    
+                    // ★追加: 日本語（非ASCII文字）に隣接する空白（スペース・タブ）を除去する（改行は維持）
+                    text = Regex.Replace(text, @"(?<=[^\x00-\x7F])[ \t　]+|[ \t　]+(?=[^\x00-\x7F])", "");
+                    
+                    return text;
                 }
             }
             return ReadImageTextWithCommandLine(filePath);
         }
         catch
         {
-            // ネイティブDLLの読み込みエラー等(Linux環境)が発生した場合はOSのコマンドにフォールバックする
             return ReadImageTextWithCommandLine(filePath);
         }
     }
@@ -382,7 +386,11 @@ public class FileContentGenerator
             {
                 string text = File.ReadAllText(resultFilePath);
                 File.Delete(resultFilePath); // 読み終わった一時ファイルを削除
-                return text.Trim();
+
+                // 日本語（非ASCII文字）に隣接する空白（スペース・タブ）を除去する
+                text = Regex.Replace(text, @"(?<=[^\x00-\x7F])[ \t　]+|[ \t　]+(?=[^\x00-\x7F])", "");
+                
+                return text;
             }
             
             string error = process?.StandardError.ReadToEnd() ?? "Unknown error";
