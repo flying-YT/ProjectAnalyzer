@@ -1,0 +1,22 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="CopyTesseractNativeAssetsToOutput" AfterTargets="Build">
+    <Message Text="[ProjectAnalyzer.Core] x64 / x86 のネイティブDLLをコピーしています..." Importance="high" />
+    
+    <ItemGroup>
+      <X64Files Include="$(MSBuildThisFileDirectory)..\native-assets\x64\**\*.*" />
+      <X86Files Include="$(MSBuildThisFileDirectory)..\native-assets\x86\**\*.*" />
+    </ItemGroup>
+    
+    <Copy SourceFiles="@(X64Files)" DestinationFolder="$(OutDir)x64\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(X86Files)" DestinationFolder="$(OutDir)x86\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyTesseractNativeAssetsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <X64Files Include="$(MSBuildThisFileDirectory)..\native-assets\x64\**\*.*" />
+      <X86Files Include="$(MSBuildThisFileDirectory)..\native-assets\x86\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(X64Files)" DestinationFolder="$(PublishDir)x64\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(X86Files)" DestinationFolder="$(PublishDir)x86\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
