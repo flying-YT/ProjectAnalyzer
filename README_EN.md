@@ -11,6 +11,12 @@ It is especially useful when using a **GitHub repository** or **your own project
 
 Furthermore, it supports reading not only source code but also **Office software files such as Word, Excel, and PowerPoint**. This allows you to provide the AI with the context of the entire project, including specifications and design documents.
 
+## **Example Usage**
+
+The source code of a web application built with this library is publicly available. You can reference it as a real-world integration example.
+
+**[ProjectAnalyzer Web Service](https://github.com/flying-YT/ProjectAnalyzerWebService)**
+
 ## **Key Features**
 
 * **🐙 Direct GitHub Repository Analysis:** Simply specify a GitHub repository URL, and it will automatically clone it to a temporary folder and run the analysis. This saves you the trouble of manually running `git clone` and allows you to quickly contextualize remote repositories.
@@ -86,6 +92,84 @@ packages
 # Build output
 dist
 ```
+
+### **Recommended Settings by Project Type**
+
+Use the following examples as a starting point based on your project type.
+
+**Web Frontend (React / Vue / Next.js, etc.)**
+
+```text
+node_modules
+.next
+.nuxt
+dist
+build
+.cache
+coverage
+```
+
+Example command (for NotebookLM):
+```cmd
+ProjectAnalyzer.Cli.exe --sanitize-html --no-codeblock
+```
+
+---
+
+**ASP.NET Core / Web Backend**
+
+```text
+bin
+obj
+.vs
+wwwroot/lib
+Migrations
+```
+
+Example command:
+```cmd
+ProjectAnalyzer.Cli.exe "C:\MyApp" "C:\MyApp\output"
+```
+
+---
+
+**Python Project**
+
+> **Note:** Since indentation is syntactically significant in Python, using `--remove-indent` may cause NotebookLM to misinterpret the code.
+
+```text
+__pycache__
+.venv
+venv
+.pytest_cache
+*.egg-info
+dist
+build
+```
+
+Example command:
+```cmd
+ProjectAnalyzer.Cli.exe --sanitize-html --no-codeblock
+```
+
+---
+
+**Node.js / TypeScript Backend**
+
+```text
+node_modules
+dist
+build
+coverage
+.nyc_output
+```
+
+Example command:
+```cmd
+ProjectAnalyzer.Cli.exe --sanitize-html --no-codeblock --remove-indent
+```
+
+---
 
 ### **3. Running as a CLI Tool**
 

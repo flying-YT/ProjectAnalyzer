@@ -11,6 +11,12 @@
 
 さらに、ソースコードだけでなく**WordやExcel、PowerPointなどのOfficeソフトのファイル読み込みにも対応**しており、仕様書や設計データも含めたプロジェクト全体のコンテキストをAIに提供することが可能です。
 
+## **活用例**
+
+このライブラリを使ったWebアプリケーションのソースコードを公開しています。実際の組み込み例として参考にできます。
+
+**[ProjectAnalyzer Web Service](https://github.com/flying-YT/ProjectAnalyzerWebService)**
+
 ## **主な機能**
 
 * **🐙 GitHubリポジトリの直接分析** GitHubのリポジトリURLを指定するだけで、自動的に一時フォルダへクローンして分析を実行できます。手動で `git clone` する手間を省き、リモートのリポジトリを素早くコンテキスト化できます。
@@ -86,6 +92,84 @@ packages
 # Build output
 dist
 ```
+
+### **開発環境別のおすすめ設定**
+
+プロジェクトの種類に合わせて、以下の設定例を参考にしてください。
+
+**Webフロントエンド（React / Vue / Next.js など）**
+
+```text
+node_modules
+.next
+.nuxt
+dist
+build
+.cache
+coverage
+```
+
+実行例（NotebookLM向け）:
+```cmd
+ProjectAnalyzer.Cli.exe --sanitize-html --no-codeblock
+```
+
+---
+
+**ASP.NET Core / Webバックエンド**
+
+```text
+bin
+obj
+.vs
+wwwroot/lib
+Migrations
+```
+
+実行例:
+```cmd
+ProjectAnalyzer.Cli.exe "C:\MyApp" "C:\MyApp\output"
+```
+
+---
+
+**Python プロジェクト**
+
+> **注意:** Pythonはインデントが構文上重要なため、`--remove-indent` を使用するとNotebookLMでコードが正常に解釈されなくなる可能性があります。
+
+```text
+__pycache__
+.venv
+venv
+.pytest_cache
+*.egg-info
+dist
+build
+```
+
+実行例:
+```cmd
+ProjectAnalyzer.Cli.exe --sanitize-html --no-codeblock
+```
+
+---
+
+**Node.js / TypeScript バックエンド**
+
+```text
+node_modules
+dist
+build
+coverage
+.nyc_output
+```
+
+実行例:
+```cmd
+ProjectAnalyzer.Cli.exe --sanitize-html --no-codeblock --remove-indent
+```
+
+---
 
 ### **3\. CLIツールとしての実行**
 
