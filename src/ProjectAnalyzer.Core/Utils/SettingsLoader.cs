@@ -60,8 +60,15 @@ public static class SettingsLoader
             {
                 repoName = repoName.Substring(0, repoName.Length - 4);
             }
-            
-            tempCloneDir = Path.Combine(Path.GetTempPath(), "ProjectAnalyzer", Guid.NewGuid().ToString(), repoName);
+
+            // パストラバーサル対策: repoName が意図したベースディレクトリ外に解決されないことを確認する
+            // Path traversal guard: ensure repoName does not resolve outside the intended base directory.
+            string baseDir = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "ProjectAnalyzer"));
+            tempCloneDir = Path.GetFullPath(Path.Combine(baseDir, Guid.NewGuid().ToString(), repoName));
+            if (!tempCloneDir.StartsWith(baseDir + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            {
+                throw new ArgumentException($"Invalid repository name in URL: path traversal detected.");
+            }
             Directory.CreateDirectory(tempCloneDir);
 
             // PATによる認証の組み込み
@@ -86,24 +93,27 @@ public static class SettingsLoader
                 Console.WriteLine($"📥 Cloning repository from {cloneUrl} (Branch: {branchName})...");
             }
 
-            // git clone コマンドの引数を動的に組み立てる
-            // Dynamically assemble the arguments for the git clone command.
-            string gitArgs = "clone --depth 1";
-            if (!string.IsNullOrEmpty(branchName))
-            {
-                // ブランチ指定がある場合は -b オプションを追加
-                // Add -b option if a branch is specified.
-                gitArgs += $" -b \"{branchName}\"";
-            }
-            gitArgs += $" \"{authCloneUrl}\" \"{tempCloneDir}\"";
-
-            var processInfo = new ProcessStartInfo("git", gitArgs)
+            // 引数インジェクション対策: ArgumentList を使い各引数を個別要素として渡す
+            // Argument injection guard: use ArgumentList to pass each argument as a discrete element.
+            var processInfo = new ProcessStartInfo("git")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            processInfo.ArgumentList.Add("clone");
+            processInfo.ArgumentList.Add("--depth");
+            processInfo.ArgumentList.Add("1");
+            if (!string.IsNullOrEmpty(branchName))
+            {
+                // ブランチ指定がある場合は -b オプションを追加
+                // Add -b option if a branch is specified.
+                processInfo.ArgumentList.Add("-b");
+                processInfo.ArgumentList.Add(branchName);
+            }
+            processInfo.ArgumentList.Add(authCloneUrl);
+            processInfo.ArgumentList.Add(tempCloneDir);
 
             using var process = Process.Start(processInfo);
             process?.WaitForExit();
@@ -111,7 +121,10 @@ public static class SettingsLoader
             if (process == null || process.ExitCode != 0)
             {
                 string error = process?.StandardError.ReadToEnd() ?? "Unknown error";
-                throw new Exception($"Git clone failed: {error}\nCommand Executed: git {gitArgs.Replace(authCloneUrl, cloneUrl)}"); // ログにPATが漏れないように置換 / Replace to prevent PAT leakage in logs
+                // ログにPATが漏れないように authCloneUrl ではなく cloneUrl を使用
+                // Use cloneUrl instead of authCloneUrl to prevent PAT leakage in logs.
+                string safeCommand = $"git clone --depth 1{(string.IsNullOrEmpty(branchName) ? "" : $" -b {branchName}")} {cloneUrl} {tempCloneDir}";
+                throw new Exception($"Git clone failed: {error}\nCommand Executed: {safeCommand}");
             }
 
             // 分析対象のパスをクローンした一時フォルダに差し替える

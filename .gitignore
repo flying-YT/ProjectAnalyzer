@@ -367,3 +367,6 @@ FodyWeavers.xsd
 
 # *.lscache files
 *.lscache
+
+# claude
+.claude
