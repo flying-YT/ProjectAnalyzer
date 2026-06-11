@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # OS specific files
 .DS_Store
+
+# *.lscache files
+*.lscache
