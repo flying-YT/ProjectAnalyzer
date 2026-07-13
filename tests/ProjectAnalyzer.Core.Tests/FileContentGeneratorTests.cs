@@ -92,6 +92,42 @@ public class FileContentGeneratorTests : IDisposable
     }
 
     [Fact]
+    public void Generate_PreservesFileOrder_WhenProcessedInParallel()
+    {
+        // Arrange: 多数のファイルを作成し、並列処理でも出力順序が維持されることを検証する
+        // Create many files to verify the output order is preserved even under parallel processing.
+        const int fileCount = 50;
+        for (int i = 0; i < fileCount; i++)
+        {
+            // ファイル名がソート順で安定するようゼロ埋めする（例: File_00.cs, File_01.cs, ...）
+            string name = $"File_{i:D2}.cs";
+            File.WriteAllText(Path.Combine(_tempDir, name), $"// content {i:D2}");
+        }
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: false);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+        var content = string.Concat(results);
+
+        // Assert: 各ファイルの見出しが、ファイル名のソート順どおりに並んでいること
+        int previousIndex = -1;
+        for (int i = 0; i < fileCount; i++)
+        {
+            int headingIndex = content.IndexOf($"## File_{i:D2}.cs", StringComparison.Ordinal);
+            Assert.True(headingIndex >= 0, $"File_{i:D2}.cs が出力に含まれていません。");
+            Assert.True(headingIndex > previousIndex, $"File_{i:D2}.cs の順序が崩れています。");
+            previousIndex = headingIndex;
+        }
+    }
+
+    [Fact]
     public void Generate_RemovesIndent_WhenRemoveIndentIsTrue()
     {
         // Arrange

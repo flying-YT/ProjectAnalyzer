@@ -26,6 +26,7 @@ The source code of a web application built with this library is publicly availab
 * **💻 Flexible Usage (CLI / DLL):** It can be run standalone as a CLI tool (EXE file), or you can integrate the core logic (`ProjectAnalyzer.Core`) into your own projects as a DLL or NuGet package.
 * **🧠 In-Memory Result Retrieval (When using DLL):** You can directly receive the analyzed text data in memory without writing to a file. It also provides an option to omit Markdown code block backticks (\`\`\`), making integration with other systems easy.
 * **🛡️ HTML Sanitization for NotebookLM:** By specifying the `--sanitize-html` option, HTML tags (e.g., `<details>`, `<div>`) included in the output are converted to a harmless format (full-width characters like `＜details＞`) to prevent AI from misinterpreting the code.
+* **⚡ Per-File Parallel Processing:** Content generation is executed in parallel on a per-file basis, leveraging multi-core CPUs to speed up the analysis. This is especially effective for a large number of files involving heavy work such as OCR (`--enable-ocr`). The degree of parallelism is automatically capped at the number of logical processors, and the output order and content remain identical to sequential execution.
 
 ## **Requirements**
 
@@ -34,6 +35,8 @@ The source code of a web application built with this library is publicly availab
 ### 📷 Prerequisites for the OCR Feature (--enable-ocr)
 
 When using the `--enable-ocr` option to extract text from images, you may need to pre-install the Tesseract engine depending on your operating system.
+
+> 💡 **On Performance:** While OCR is a CPU-intensive process, this tool processes files in parallel on a per-file basis, so it can significantly reduce processing time in multi-core environments (the degree of parallelism is automatically capped at the number of logical processors).
 
 #### 1. OS-Specific Requirements
 
