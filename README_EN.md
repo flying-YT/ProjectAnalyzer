@@ -38,6 +38,8 @@ When using the `--enable-ocr` option to extract text from images, you may need t
 
 > 💡 **On Performance:** While OCR is a CPU-intensive process, this tool processes files in parallel on a per-file basis, so it can significantly reduce processing time in multi-core environments (the degree of parallelism is automatically capped at the number of logical processors).
 
+> ⚙️ **Note for library (DLL) integration — OpenMP thread settings:** When OCR is enabled, this library automatically sets the process-wide environment variable `OMP_THREAD_LIMIT=1` on first use. This prevents CPU oversubscription, where the per-file parallelism and Tesseract's internal parallelism (which uses all cores per image) compete and slow each other down. This is fine for most cases, but **if your host process also uses other OpenMP-based libraries (e.g., numerical or image processing) whose thread count you want to manage yourself**, set `OMP_THREAD_LIMIT` or `OMP_NUM_THREADS` before using this library. If either is already set, the library will not override it.
+
 #### 1. OS-Specific Requirements
 
 **🪟 Windows**
