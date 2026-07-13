@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using ExcelDataReader;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -23,6 +24,30 @@ public class FileContentGenerator
 {
     private readonly AnalyzerSettings _settings;
     private const long MaxFileSize = 4 * 1024 * 1024; // 4MB
+
+    /// <summary>
+    /// 静的コンストラクタ。OCR(Tesseract)の内部OpenMP並列を1スレッドに制限します。
+    /// Tesseractは1画像あたり全コアを使って並列処理するため、本ツールのファイル単位並列と
+    /// 二重になるとCPUのオーバーサブスクリプション（スレッド過多）が発生し、かえって低速化します。
+    /// 並列化をファイル単位に一本化するため、ユーザーが明示指定していない場合のみ1スレッドに固定します。
+    /// この設定はプロセス内のlibtesseractと、フォールバックで起動するtesseract子プロセスの双方に効きます。
+    /// Static constructor. Caps Tesseract's internal OpenMP parallelism to a single thread.
+    /// Tesseract parallelizes each image across all cores; combined with this tool's per-file
+    /// parallelism it causes CPU oversubscription and slowdown. To keep parallelism at the file
+    /// level only, we pin the thread count to 1 unless the user has set it explicitly. This applies
+    /// to both the in-process libtesseract and the fallback tesseract child processes.
+    /// </summary>
+    static FileContentGenerator()
+    {
+        bool userConfigured =
+            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OMP_THREAD_LIMIT"))
+            || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OMP_NUM_THREADS"));
+
+        if (!userConfigured)
+        {
+            Environment.SetEnvironmentVariable("OMP_THREAD_LIMIT", "1");
+        }
+    }
 
     /// <summary>
     /// FileContentGenerator クラスの新しいインスタンスを初期化します。
@@ -45,18 +70,25 @@ public class FileContentGenerator
     /// <returns>生成されたMarkdownコンテンツ文字列のリスト。/ The list of generated Markdown content strings.</returns>
     public List<string> Generate()
     {
+        var allFiles = GetAllFiles(_settings.ProjectPath);
+
+        // 【map】各ファイルのMarkdown生成をファイル単位で並列実行する（OCR等の重い処理を高速化）。
+        // 生成結果はインデックス順に格納するため、出力順序は逐次実行時と完全に一致する。
+        // [map] Generate the Markdown for each file in parallel (speeds up heavy work such as OCR).
+        // Results are stored by index, so the output order stays identical to sequential execution.
+        var markdownByIndex = GenerateMarkdownInParallel(allFiles);
+
+        // 【reduce】生成済みの結果を元の順序どおりに連結・サイズ分割する（逐次処理・従来と同一ロジック）。
+        // [reduce] Concatenate and split the pre-generated results in original order (sequential, same logic as before).
         var fileContents = new List<string>();
         var sb = new StringBuilder();
         sb.AppendLine("# \U0001f4c4 Project Context");
         sb.AppendLine();
 
         long currentSize = 0;
-        var allFiles = GetAllFiles(_settings.ProjectPath);
 
-        foreach (var file in allFiles)
+        foreach (var fileMarkdown in markdownByIndex)
         {
-            string fileMarkdown = GenerateMarkdownForFile(file);
-            
             // 処理をスキップしたファイル（画像や読み込みエラー等）は無視する
             // Ignore files that were skipped (e.g., images, read errors).
             if (string.IsNullOrEmpty(fileMarkdown)) continue;
@@ -378,6 +410,16 @@ public class FileContentGenerator
                 CreateNoWindow = true
             };
 
+            // 静的コンストラクタで決定したOpenMPスレッド制限を、子プロセス(tesseract)へ確実に継承させる。
+            // ファイル単位並列と二重にならないようにするため（オーバーサブスクリプション回避）。
+            // Ensure the child tesseract process inherits the OpenMP thread limit decided in the static
+            // constructor, to avoid oversubscription with the tool's per-file parallelism.
+            var ompThreadLimit = Environment.GetEnvironmentVariable("OMP_THREAD_LIMIT");
+            if (!string.IsNullOrEmpty(ompThreadLimit))
+            {
+                processInfo.EnvironmentVariables["OMP_THREAD_LIMIT"] = ompThreadLimit;
+            }
+
             using var process = System.Diagnostics.Process.Start(processInfo);
             process?.WaitForExit();
 
@@ -568,19 +610,58 @@ public class FileContentGenerator
         var fileContents = new List<(string, string)>();
         var allFiles = GetAllFiles(_settings.ProjectPath);
 
-        foreach (var file in allFiles)
+        // 【map】各ファイルのMarkdown生成をファイル単位で並列実行する（出力順序はインデックスで維持）。
+        // [map] Generate the Markdown for each file in parallel (output order preserved by index).
+        var markdownByIndex = GenerateMarkdownInParallel(allFiles);
+
+        // 【reduce】生成結果を元の順序どおりに集約する（逐次処理）。
+        // [reduce] Aggregate the generated results in original order (sequential).
+        for (int i = 0; i < allFiles.Count; i++)
         {
-            string fileMarkdown = GenerateMarkdownForFile(file);
+            string fileMarkdown = markdownByIndex[i];
             if (string.IsNullOrEmpty(fileMarkdown)) continue;
 
             // 元の相対パスを取得し、末尾に .md を追加する（例: "src/Utils.cs" -> "src/Utils.cs.md"）
             // Get the original relative path and append .md to the end (e.g., "src/Utils.cs" -> "src/Utils.cs.md").
-            string relativePath = Path.GetRelativePath(_settings.ProjectPath, file);
+            string relativePath = Path.GetRelativePath(_settings.ProjectPath, allFiles[i]);
             string markdownRelativePath = relativePath + ".md";
 
             fileContents.Add((markdownRelativePath, fileMarkdown));
         }
 
         return fileContents;
+    }
+
+    /// <summary>
+    /// ファイル一覧を受け取り、各ファイルのMarkdown生成をファイル単位で並列実行します。
+    /// 結果は入力と同じインデックス位置に格納されるため、呼び出し側は出力順序を維持できます。
+    /// Runs Markdown generation per file in parallel and returns the results at the same index
+    /// positions as the input, so the caller can preserve the output order.
+    /// </summary>
+    /// <param name="allFiles">処理対象のファイルパス一覧 / The list of file paths to process.</param>
+    /// <returns>各ファイルの生成結果（インデックス順） / The generated content per file, in index order.</returns>
+    private string[] GenerateMarkdownInParallel(List<string> allFiles)
+    {
+        var results = new string[allFiles.Count];
+
+        // 並列度は論理プロセッサ数に制限する。無制限だと画像ごとにTesseractEngineを大量生成し、
+        // メモリやネイティブライブラリへの負荷が過大になるため。
+        // Cap parallelism at the logical processor count. Unbounded parallelism would spawn many
+        // TesseractEngine instances per image, overloading memory and the native library.
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+        };
+
+        // GenerateMarkdownForFile は共有可変状態を持たない（_settings は読み取り専用、一時ファイルは一意名、
+        // 例外は内部で捕捉）ため、ファイル単位の並列実行はスレッドセーフである。
+        // GenerateMarkdownForFile has no shared mutable state (read-only _settings, unique temp file names,
+        // exceptions caught internally), so per-file parallel execution is thread-safe.
+        Parallel.For(0, allFiles.Count, parallelOptions, i =>
+        {
+            results[i] = GenerateMarkdownForFile(allFiles[i]);
+        });
+
+        return results;
     }
 }
