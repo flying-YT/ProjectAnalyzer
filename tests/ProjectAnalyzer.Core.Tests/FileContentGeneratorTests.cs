@@ -201,6 +201,118 @@ public class FileContentGeneratorTests : IDisposable
         Assert.True(tableIndex < afterIndex, "表の後の段落が正しい位置にありません。");
     }
 
+    [Fact]
+    public void Generate_SkipsEmbeddedImages_WhenOcrIsDisabled()
+    {
+        // Arrange: 画像を埋め込んだ .docx を作成する（OCRは無効のまま）
+        var tempFile = Path.Combine(_tempDir, "ImageDoc.docx");
+        CreateWordFileWithImage(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: false);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate());
+
+        // Assert: 本文は抽出されるが、OCR無効時は画像セクションが出力されないこと
+        Assert.Contains("画像付きの段落", content);
+        Assert.DoesNotContain("[Embedded Images]", content);
+    }
+
+    [Fact]
+    public void Generate_OmitsCodeBlock_WhenOmitCodeBlockTicksIsTrue()
+    {
+        // Arrange
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate());
+
+        // Assert: details ブロックの本文は残るが、コードブロックは出力されないこと
+        Assert.Contains("<details>", content);
+        Assert.Contains("public class A {}", content);
+        Assert.DoesNotContain("```", content);
+    }
+
+    [Fact]
+    public void Generate_SplitsIntoMultipleContexts_WhenExceedingMaxFileSize()
+    {
+        // Arrange: 1ファイルあたり約1.2MB（Markdown上は本文が2回出力されるため約2.4MB）のファイルを2つ作成し、
+        // 合計が上限の4MBを超えるようにする。
+        const int contentLength = 1_200_000;
+        for (int i = 0; i < 2; i++)
+        {
+            File.WriteAllText(Path.Combine(_tempDir, $"Large_{i}.txt"), new string('a', contentLength));
+        }
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: false);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: 上限を超えた分が別のコンテキストへ分割されること
+        Assert.Equal(2, results.Count);
+        Assert.StartsWith("# \U0001f4c4 Project Context", results[0]);
+        Assert.StartsWith("# \U0001f4c4 Project Context (続き)", results[1]);
+
+        // 分割後もすべてのファイルが失われていないこと
+        var joined = string.Concat(results);
+        Assert.Contains("## Large_0.txt", joined);
+        Assert.Contains("## Large_1.txt", joined);
+    }
+
+    [Fact]
+    public void GeneratePerFile_ReturnsMarkdownPerFile_WithRelativePathsPreserved()
+    {
+        // Arrange: サブディレクトリを含む構成にする
+        var subDir = Path.Combine(_tempDir, "SubDir");
+        Directory.CreateDirectory(subDir);
+        File.WriteAllText(Path.Combine(subDir, "Nested.cs"), "public class Nested {}");
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: false,
+            outputPerFile: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.GeneratePerFile();
+
+        // Assert: 除外ファイルを除いた各ファイルが1件ずつ返ること
+        Assert.Equal(2, results.Count);
+
+        // 元の相対パスに .md を付けたパスになっていること
+        var root = Assert.Single(results, r => r.RelativePath == "TestCode.cs.md");
+        Assert.Contains("public class A {}", root.Content);
+
+        string nestedPath = Path.Combine("SubDir", "Nested.cs") + ".md";
+        var nested = Assert.Single(results, r => r.RelativePath == nestedPath);
+        Assert.Contains("public class Nested {}", nested.Content);
+
+        // 除外ファイルが含まれないこと
+        Assert.DoesNotContain(results, r => r.RelativePath.Contains("IgnoreMe"));
+    }
+
     /// <summary>
     /// テスト用に、段落と表を含む .docx ファイルを生成します。
     /// </summary>
@@ -230,6 +342,28 @@ public class FileContentGeneratorTests : IDisposable
 
         body.AppendChild(table);
         body.AppendChild(CreateParagraph("末尾の段落"));
+
+        mainPart.Document.Save();
+    }
+
+    /// <summary>
+    /// テスト用に、埋め込み画像を含む .docx ファイルを生成します。
+    /// </summary>
+    private static void CreateWordFileWithImage(string path)
+    {
+        // 1x1ピクセルのPNG（OCRは行わないため内容は問わない）
+        byte[] pngBytes = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=");
+
+        using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var mainPart = document.AddMainDocumentPart();
+        mainPart.Document = new Document(new Body(CreateParagraph("画像付きの段落")));
+
+        var imagePart = mainPart.AddImagePart(ImagePartType.Png);
+        using (var imageStream = new MemoryStream(pngBytes))
+        {
+            imagePart.FeedData(imageStream);
+        }
 
         mainPart.Document.Save();
     }
