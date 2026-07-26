@@ -4,6 +4,9 @@ using Xunit;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace ProjectAnalyzer.Core.Tests;
 
@@ -155,7 +158,91 @@ public class FileContentGeneratorTests : IDisposable
         
         // インデントがすべて削除されていることを検証
         Assert.Contains("class A\n{\nvoid M()\n{\nint x = 1;\n}\n}", content.Replace("\r\n", "\n"));
-        
+
         File.Delete(tempFile);
+    }
+
+    [Fact]
+    public void Generate_ConvertsWordTableToMarkdownTable()
+    {
+        // Arrange: 段落 → 表 → 段落 の順に並んだ .docx を作成する
+        // Create a .docx laid out as paragraph -> table -> paragraph.
+        var tempFile = Path.Combine(_tempDir, "TableDoc.docx");
+        CreateWordFileWithTable(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: false);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: 1行目がヘッダー、2行目が区切り行のMarkdownテーブルになっていること
+        Assert.Contains("| 項目 | 説明 |\n| --- | --- |\n", content);
+
+        // セル内の "|" がエスケープされ、列区切りとして解釈されないこと
+        Assert.Contains("| A | あ\\|あ |", content);
+
+        // セル内の複数段落が <br> で1行にまとめられていること
+        Assert.Contains("| B | 1行目<br>2行目 |", content);
+
+        // 横結合(gridSpan)された行も、空セルで列数が揃えられていること
+        Assert.Contains("| 結合セル |  |", content);
+
+        // 段落と表の出現順序が元の文書どおりであること
+        int beforeIndex = content.IndexOf("導入の段落", StringComparison.Ordinal);
+        int tableIndex = content.IndexOf("| 項目 | 説明 |", StringComparison.Ordinal);
+        int afterIndex = content.IndexOf("末尾の段落", StringComparison.Ordinal);
+        Assert.True(beforeIndex >= 0 && beforeIndex < tableIndex, "表の前の段落が正しい位置にありません。");
+        Assert.True(tableIndex < afterIndex, "表の後の段落が正しい位置にありません。");
+    }
+
+    /// <summary>
+    /// テスト用に、段落と表を含む .docx ファイルを生成します。
+    /// </summary>
+    private static void CreateWordFileWithTable(string path)
+    {
+        using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var mainPart = document.AddMainDocumentPart();
+        mainPart.Document = new Document(new Body());
+        var body = mainPart.Document.Body!;
+
+        body.AppendChild(CreateParagraph("導入の段落"));
+
+        var table = new Table();
+        table.AppendChild(CreateRow("項目", "説明"));
+        table.AppendChild(CreateRow("A", "あ|あ"));
+
+        // 2つの段落を持つセル / A cell containing two paragraphs.
+        table.AppendChild(new TableRow(
+            new TableCell(CreateParagraph("B")),
+            new TableCell(CreateParagraph("1行目"), CreateParagraph("2行目"))));
+
+        // 2列ぶん横結合されたセルのみの行 / A row with a single cell spanning two columns.
+        table.AppendChild(new TableRow(
+            new TableCell(
+                new TableCellProperties(new GridSpan { Val = 2 }),
+                CreateParagraph("結合セル"))));
+
+        body.AppendChild(table);
+        body.AppendChild(CreateParagraph("末尾の段落"));
+
+        mainPart.Document.Save();
+    }
+
+    private static Paragraph CreateParagraph(string text) => new Paragraph(new Run(new Text(text)));
+
+    private static TableRow CreateRow(params string[] cellTexts)
+    {
+        var row = new TableRow();
+        foreach (var text in cellTexts)
+        {
+            row.AppendChild(new TableCell(CreateParagraph(text)));
+        }
+        return row;
     }
 }
