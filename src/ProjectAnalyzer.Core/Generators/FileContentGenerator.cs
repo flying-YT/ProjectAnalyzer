@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using ExcelDataReader;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentFormat.OpenXml.Presentation;
@@ -503,12 +504,9 @@ public class FileContentGenerator
                 var body = wordDoc.MainDocumentPart?.Document?.Body;
                 if (body != null)
                 {
-                    // ドキュメント内の段落(Paragraph)を順番に抽出
-                    // Sequentially extract paragraphs (Paragraph) in the document.
-                    foreach (var para in body.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>())
-                    {
-                        sb.AppendLine(para.InnerText);
-                    }
+                    // 本文のブロック要素(段落・表)を出現順に抽出する
+                    // Extract the block elements (paragraphs and tables) of the body in document order.
+                    AppendWordBlocks(body, sb);
                 }
 
                 // 埋め込み画像の存在チェックとOCR
@@ -531,6 +529,123 @@ public class FileContentGenerator
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Word文書のブロック要素(段落・表)を、出現順にMarkdownとして追記します。
+    /// 表はセル単位の構造を保つため、Markdownのテーブル記法へ変換します。
+    /// Appends the block elements (paragraphs and tables) of a Word document as Markdown, in document
+    /// order. Tables are converted to Markdown table syntax so that their cell structure is preserved.
+    /// </summary>
+    /// <param name="container">走査対象の要素（本文やコンテンツコントロール等） / The element to walk (body, content control, etc.).</param>
+    /// <param name="sb">出力先のStringBuilder / The destination StringBuilder.</param>
+    private void AppendWordBlocks(OpenXmlElement container, StringBuilder sb)
+    {
+        foreach (var element in container.Elements())
+        {
+            switch (element)
+            {
+                case DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph:
+                    sb.AppendLine(paragraph.InnerText);
+                    break;
+
+                case DocumentFormat.OpenXml.Wordprocessing.Table table:
+                    AppendWordTable(table, sb);
+                    break;
+
+                default:
+                    // コンテンツコントロール(SdtBlock)など、段落や表を内包しうる要素は再帰的に辿る。
+                    // 表の中身は上のcaseで処理済みのため、ここで二重に出力されることはない。
+                    // Recurse into elements that may contain paragraphs or tables (e.g. SdtBlock).
+                    // Table contents are handled in the case above, so nothing is emitted twice.
+                    if (element.HasChildren)
+                    {
+                        AppendWordBlocks(element, sb);
+                    }
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Wordの表(Table)をMarkdownのテーブル記法へ変換して追記します。
+    /// Converts a Word table into Markdown table syntax and appends it.
+    /// </summary>
+    /// <param name="table">変換対象の表 / The table to convert.</param>
+    /// <param name="sb">出力先のStringBuilder / The destination StringBuilder.</param>
+    private void AppendWordTable(DocumentFormat.OpenXml.Wordprocessing.Table table, StringBuilder sb)
+    {
+        var rows = new List<List<string>>();
+
+        foreach (var row in table.Elements<DocumentFormat.OpenXml.Wordprocessing.TableRow>())
+        {
+            var cells = new List<string>();
+
+            foreach (var cell in row.Elements<DocumentFormat.OpenXml.Wordprocessing.TableCell>())
+            {
+                cells.Add(GetWordCellText(cell));
+
+                // 横結合(gridSpan)されたセルは1つのセルとして現れるため、結合された列数ぶんの
+                // 空セルを補い、他の行と列数が揃うようにする。
+                // A horizontally merged cell (gridSpan) appears as a single cell, so pad it with empty
+                // cells to keep the column count aligned with the other rows.
+                int gridSpan = cell.TableCellProperties?.GridSpan?.Val?.Value ?? 1;
+                for (int i = 1; i < gridSpan; i++)
+                {
+                    cells.Add(string.Empty);
+                }
+            }
+
+            if (cells.Count > 0)
+            {
+                rows.Add(cells);
+            }
+        }
+
+        if (rows.Count == 0) return;
+
+        // 行ごとに列数が異なるとMarkdownの表として崩れるため、最大列数に合わせて空セルで埋める
+        // Rows with differing column counts break the Markdown table, so pad them to the maximum count.
+        int columnCount = rows.Max(r => r.Count);
+        foreach (var row in rows)
+        {
+            while (row.Count < columnCount) row.Add(string.Empty);
+        }
+
+        // 表の前後に空行が無いとMarkdownのテーブルとして認識されない
+        // Without blank lines around it, the table is not recognized as a Markdown table.
+        sb.AppendLine();
+        sb.AppendLine($"| {string.Join(" | ", rows[0])} |");
+        sb.AppendLine($"| {string.Join(" | ", Enumerable.Repeat("---", columnCount))} |");
+
+        foreach (var row in rows.Skip(1))
+        {
+            sb.AppendLine($"| {string.Join(" | ", row)} |");
+        }
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// 表のセル内のテキストを、Markdownのテーブル1セルに収まる形へ整形して返します。
+    /// Returns the text of a table cell, formatted to fit in a single Markdown table cell.
+    /// </summary>
+    /// <param name="cell">対象のセル / The target cell.</param>
+    /// <returns>整形済みのセルテキスト / The formatted cell text.</returns>
+    private string GetWordCellText(DocumentFormat.OpenXml.Wordprocessing.TableCell cell)
+    {
+        // Markdownの表は1セルを1行で表すため、セル内の複数段落は改行タグで連結する。
+        // ただしHTMLタグ無害化が有効な場合は<br>も置換されてしまうため、空白で連結する。
+        // A Markdown table cell must stay on one line, so multiple paragraphs are joined with <br>.
+        // When HTML sanitization is enabled, <br> would also be replaced, so a space is used instead.
+        string separator = _settings.SanitizeHtmlTags ? " " : "<br>";
+
+        var paragraphTexts = cell.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>()
+            .Select(p => p.InnerText.Replace("\r", " ").Replace("\n", " ").Trim())
+            .Where(t => !string.IsNullOrEmpty(t));
+
+        // セル内の "|" は列の区切りと解釈されるためエスケープする
+        // Escape "|" inside a cell, otherwise it is interpreted as a column separator.
+        return string.Join(separator, paragraphTexts).Replace("|", "\\|");
     }
 
     /// <summary>
