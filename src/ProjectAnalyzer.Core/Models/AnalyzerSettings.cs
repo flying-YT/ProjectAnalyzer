@@ -54,6 +54,16 @@ public class AnalyzerSettings
     public bool EnableOcr { get; }
 
     /// <summary>
+    /// 出力Markdown 1ファイルあたりのサイズのしきい値（バイト） / The size threshold per output Markdown file, in bytes.
+    /// </summary>
+    public long MaxOutputSize { get; }
+
+    /// <summary>
+    /// 出力Markdown 1ファイルあたりのサイズの既定のしきい値（4MB） / The default size threshold per output Markdown file (4MB).
+    /// </summary>
+    public const long DefaultMaxOutputSize = 4 * 1024 * 1024;
+
+    /// <summary>
     /// 一時的なクローンパス（Gitリポジトリの場合） / The temporary clone path (for Git repositories).
     /// </summary>
     public string? TempClonePath { get; }
@@ -72,7 +82,8 @@ public class AnalyzerSettings
     /// <param name="sanitizeHtmlTags">HTMLタグ無害化フラグ / Sanitize HTML tags flag</param>
     /// <param name="removeIndent">インデント削除フラグ / Remove indent flag</param>
     /// <param name="enableOcr">OCR有効化フラグ / Enable OCR flag</param>
-    public AnalyzerSettings(string projectPath, string outputPath, ISet<string> ignoreList, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, string? tempClonePath = null, bool sanitizeHtmlTags = false, bool removeIndent = false, bool enableOcr = false)
+    /// <param name="maxOutputSize">出力Markdown 1ファイルあたりのサイズのしきい値（バイト）。0以下を指定した場合は既定値を使用します。/ The size threshold per output Markdown file in bytes. Values of zero or less fall back to the default.</param>
+    public AnalyzerSettings(string projectPath, string outputPath, ISet<string> ignoreList, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, string? tempClonePath = null, bool sanitizeHtmlTags = false, bool removeIndent = false, bool enableOcr = false, long maxOutputSize = DefaultMaxOutputSize)
     {
         ProjectPath = Path.GetFullPath(projectPath);
         OutputPath = string.IsNullOrWhiteSpace(outputPath) ? string.Empty : Path.GetFullPath(outputPath);
@@ -84,5 +95,9 @@ public class AnalyzerSettings
         SanitizeHtmlTags = sanitizeHtmlTags;
         RemoveIndent = removeIndent;
         EnableOcr = enableOcr;
+
+        // 0以下だと分割が無限に発生するため、不正な値は既定値へ丸める
+        // Values of zero or less would cause endless splitting, so invalid values fall back to the default.
+        MaxOutputSize = maxOutputSize > 0 ? maxOutputSize : DefaultMaxOutputSize;
     }
 }

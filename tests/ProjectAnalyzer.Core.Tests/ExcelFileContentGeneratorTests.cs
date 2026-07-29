@@ -91,6 +91,133 @@ public class ExcelFileContentGeneratorTests : IDisposable
         Assert.True(secondSheetIndex < secondShapeIndex, "2枚目の図形テキストがシートのセクション内にありません。");
     }
 
+    [Fact]
+    public void Generate_SplitsExcelIntoParts_PerSheet_WhenExceedingMaxOutputSize()
+    {
+        // Arrange: それぞれ単体でしきい値を超えるシートを2枚持つ .xlsx を作成する
+        // Create a .xlsx with two sheets that each exceed the threshold on their own.
+        var excelPath = Path.Combine(_tempDir, "Book.xlsx");
+        CreateExcelFileWithSheets(excelPath, ("シートA", new string('a', 2000)), ("シートB", new string('b', 2000)));
+
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string>(), outputToFile: false, maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: シート単位で別のコンテキストへ分割されること
+        Assert.Equal(2, results.Count);
+        Assert.Contains("### シートA", results[0]);
+        Assert.DoesNotContain("### シートB", results[0]);
+        Assert.Contains("### シートB", results[1]);
+
+        // どのパートにもファイル名と相対パスが共通ヘッダとして再掲されること
+        // Every part repeats the file name and the relative path as a shared header.
+        foreach (var part in results)
+        {
+            Assert.Contains("## Book.xlsx (", part);
+            Assert.Contains("**Relative Path:** `Book.xlsx`", part);
+
+            // details とコードブロックがパート内で閉じていること
+            // The details block and the code block are closed within the part.
+            Assert.Equal(CountOccurrences(part, "<details>"), CountOccurrences(part, "</details>"));
+            Assert.Equal(1, CountOccurrences(part, "<details>"));
+            Assert.Equal(0, CountOccurrences(part, "```") % 2);
+        }
+
+        // パート番号が付与されること
+        Assert.Contains("**Part:** 1/2", results[0]);
+        Assert.Contains("**Part:** 2/2", results[1]);
+    }
+
+    [Fact]
+    public void Generate_DoesNotSplitExcel_WhenItHasOnlyOneSheet()
+    {
+        // Arrange: しきい値を大きく超えるが、シートが1枚しかない .xlsx を作成する
+        // Create a .xlsx that far exceeds the threshold but has only one sheet.
+        var excelPath = Path.Combine(_tempDir, "Single.xlsx");
+        CreateExcelFileWithSheets(excelPath, ("唯一のシート", new string('a', 5000)));
+
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string>(), outputToFile: false, maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: 分割の境界が無いため、しきい値を超えたまま1つにまとまること
+        // With no split boundary it stays as one oversized output.
+        Assert.Single(results);
+        Assert.Contains("### 唯一のシート", results[0]);
+
+        // 分割されていないため、パート表記は付かない
+        Assert.DoesNotContain("**Part:**", results[0]);
+        Assert.Contains("## Single.xlsx\n", results[0].Replace("\r\n", "\n"));
+    }
+
+    [Fact]
+    public void GeneratePerFile_NumbersFileNames_WhenSplitIntoParts()
+    {
+        // Arrange
+        var excelPath = Path.Combine(_tempDir, "Book.xlsx");
+        CreateExcelFileWithSheets(excelPath, ("シートA", new string('a', 2000)), ("シートB", new string('b', 2000)));
+        File.WriteAllText(Path.Combine(_tempDir, "Small.txt"), "小さいファイル");
+
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string>(), outputToFile: false, outputPerFile: true, maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.GeneratePerFile();
+
+        // Assert: 分割されたファイルは連番付き、分割されないファイルは従来どおりの名前になること
+        // Split files get a sequence number, while unsplit files keep their original name.
+        Assert.Contains(results, r => r.RelativePath == "Book.xlsx.1.md");
+        Assert.Contains(results, r => r.RelativePath == "Book.xlsx.2.md");
+        Assert.DoesNotContain(results, r => r.RelativePath == "Book.xlsx.md");
+        Assert.Contains(results, r => r.RelativePath == "Small.txt.md");
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0;
+        for (int index = text.IndexOf(value, StringComparison.Ordinal); index >= 0; index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// テスト用に、指定した「シート名と1セルの値」の組からなる .xlsx ファイルを生成します。
+    /// </summary>
+    private static void CreateExcelFileWithSheets(string path, params (string Name, string Value)[] sheets)
+    {
+        using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
+
+        var workbookPart = document.AddWorkbookPart();
+        workbookPart.Workbook = new Workbook();
+        var sheetElements = workbookPart.Workbook.AppendChild(new Sheets());
+
+        uint sheetId = 1;
+        foreach (var (name, value) in sheets)
+        {
+            var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+            var sheetData = new SheetData();
+            worksheetPart.Worksheet = new Worksheet(sheetData);
+            sheetData.Append(CreateRow(1, value));
+            worksheetPart.Worksheet.Save();
+
+            sheetElements.Append(new Sheet
+            {
+                Id = workbookPart.GetIdOfPart(worksheetPart),
+                SheetId = sheetId,
+                Name = name
+            });
+            sheetId++;
+        }
+
+        workbookPart.Workbook.Save();
+    }
+
     /// <summary>
     /// テスト用に、1シート・3行（うち1行は空行）の .xlsx ファイルを生成します。
     /// </summary>

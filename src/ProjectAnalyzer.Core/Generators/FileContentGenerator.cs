@@ -24,7 +24,6 @@ namespace ProjectAnalyzer.Core.Generators;
 public class FileContentGenerator
 {
     private readonly AnalyzerSettings _settings;
-    private const long MaxFileSize = 4 * 1024 * 1024; // 4MB
 
     /// <summary>
     /// 静的コンストラクタ。OCR(Tesseract)の内部OpenMP並列を1スレッドに制限します。
@@ -79,8 +78,10 @@ public class FileContentGenerator
         // Results are stored by index, so the output order stays identical to sequential execution.
         var markdownByIndex = GenerateMarkdownInParallel(allFiles);
 
-        // 【reduce】生成済みの結果を元の順序どおりに連結・サイズ分割する（逐次処理・従来と同一ロジック）。
-        // [reduce] Concatenate and split the pre-generated results in original order (sequential, same logic as before).
+        // 【reduce】生成済みの結果を元の順序どおりに連結・サイズ分割する（逐次処理）。
+        // 各ファイルは既にしきい値以下のパートへ分割済みなので、ここではパート単位で詰めていく。
+        // [reduce] Concatenate and split the pre-generated results in original order (sequential).
+        // Each file is already split into parts under the threshold, so parts are packed here.
         var fileContents = new List<string>();
         var sb = new StringBuilder();
         sb.AppendLine("# \U0001f4c4 Project Context");
@@ -88,7 +89,15 @@ public class FileContentGenerator
 
         long currentSize = 0;
 
-        foreach (var fileMarkdown in markdownByIndex)
+        // 見出しだけの空コンテキストを作らないよう、中身が入ったかどうかで判定する。
+        // sb.Length では先頭の見出しに反応してしまい、最初のパートが単体でしきい値を超えた場合に
+        // 見出しだけのファイルが生成されてしまう。
+        // Track whether any content was added, so that an empty context is never emitted. Using
+        // sb.Length would react to the leading heading and produce a heading-only file when the very
+        // first part exceeds the threshold on its own.
+        bool hasContent = false;
+
+        foreach (var fileMarkdown in markdownByIndex.SelectMany(parts => parts))
         {
             // 処理をスキップしたファイル（画像や読み込みエラー等）は無視する
             // Ignore files that were skipped (e.g., images, read errors).
@@ -96,20 +105,24 @@ public class FileContentGenerator
 
             long fileSize = Encoding.UTF8.GetByteCount(fileMarkdown);
 
-            if (currentSize + fileSize > MaxFileSize && sb.Length > 0)
+            if (hasContent && currentSize + fileSize > _settings.MaxOutputSize)
             {
                 fileContents.Add(sb.ToString());
                 sb.Clear();
                 sb.AppendLine("# \U0001f4c4 Project Context (続き)");
                 sb.AppendLine();
                 currentSize = 0;
+                hasContent = false;
             }
 
             sb.Append(fileMarkdown);
             currentSize += fileSize;
+            hasContent = true;
         }
 
-        if (sb.Length > 0)
+        // 対象ファイルが1つも無かった場合でも、従来どおり見出しだけのコンテキストを1つ返す
+        // Even when there is no target file, return a single heading-only context as before.
+        if (hasContent || fileContents.Count == 0)
         {
             fileContents.Add(sb.ToString());
         }
@@ -147,27 +160,22 @@ public class FileContentGenerator
     }
 
     /// <summary>
-    /// 単一のソースファイルからMarkdownコンテンツを生成します。
-    /// Generates Markdown content from a single source file.
+    /// 単一のソースファイルから、しきい値以下になるよう分割されたMarkdownコンテンツを生成します。
+    /// 分割はセクション（Excelのシート、PowerPointのスライド、Wordの見出し）の境界でのみ行い、
+    /// セクションが1つしかないファイルや、セクションの途中で分割が必要になる場合は分割しません。
+    /// Generates the Markdown content of a single source file, split into parts under the threshold.
+    /// Splitting happens only at section boundaries (Excel sheets, PowerPoint slides, Word headings);
+    /// files with a single section, or splits that would fall inside a section, are left unsplit.
     /// </summary>
     /// <param name="filePath">処理対象のソースファイルのパス。/ The path of the source file to process.</param>
-    /// <returns>生成されたMarkdownコンテンツ。/ The generated Markdown content.</returns>
-    private string GenerateMarkdownForFile(string filePath)
+    /// <returns>生成されたMarkdownコンテンツのパート一覧。/ The generated Markdown content parts.</returns>
+    private List<string> GenerateMarkdownPartsForFile(string filePath)
     {
         try
         {
-            var sb = new StringBuilder();
-            string relativePath = Path.GetRelativePath(_settings.ProjectPath, filePath);
             string extension = Path.GetExtension(filePath).ToLowerInvariant();
 
-            sb.AppendLine("---");
-            sb.AppendLine();
-            sb.AppendLine($"## {Path.GetFileName(filePath)}");
-            sb.AppendLine();
-            sb.AppendLine($"**Relative Path:** `{relativePath}`");
-            sb.AppendLine();
-
-            string content;
+            List<string> sections;
             string language = "";
 
             // Excelファイルの場合の特別処理
@@ -184,93 +192,225 @@ public class FileContentGenerator
                     ? ExtractExcelShapesAndImagesBySheet(filePath, out shapesError)
                     : new Dictionary<string, string>();
 
-                content = ReadExcelFile(filePath, shapesBySheet);
+                sections = ReadExcelFile(filePath, shapesBySheet);
 
                 if (shapesError != null)
                 {
-                    content += $"\n[Excel Extract Error: {shapesError}]\n";
+                    sections.Add($"[Excel Extract Error: {shapesError}]\n");
                 }
             }
             // Wordファイル(.docx)の場合の特別処理
             // Special handling for Word files (.docx).
             else if (extension == ".docx")
             {
-                content = ReadWordFile(filePath);
-                if (string.IsNullOrEmpty(content)) return string.Empty;
+                sections = ReadWordFile(filePath);
             }
             // PowerPointファイル(.pptx)の場合の特別処理 (追加)
             // Special handling for PowerPoint files (.pptx).
             else if (extension == ".pptx")
             {
-                content = ReadPowerPointFile(filePath);
-                if (string.IsNullOrEmpty(content)) return string.Empty;
+                sections = ReadPowerPointFile(filePath);
             }
             else
             {
-                // 通常のテキストファイルとして読み込み
-                // Read as a normal text file.
-                content = File.ReadAllText(filePath);
+                // 通常のテキストファイルは構造を推測できないため、常に単一セクションとして扱う。
+                // ソースコード中の "### コメント" を見出しと誤検出しないよう、分割対象から外している。
+                // Plain text files have no structure we can infer, so they are always a single section.
+                // This keeps "### comment" lines in source code from being mistaken for headings.
+                sections = new List<string> { File.ReadAllText(filePath) };
                 language = LanguageMapper.GetLanguage(extension);
             }
 
-            // HTMLタグを無害化するオプションが有効な場合
-            // "if (a < b)" 等を除外するため、"<" の直後にアルファベットか "/" が続くパターンのみ置換する
-            if (_settings.SanitizeHtmlTags)
+            // 内容が空のセクションは出力しない。すべて空ならファイルごとスキップする。
+            // Drop empty sections, and skip the whole file when nothing remains.
+            sections = sections.Where(s => !string.IsNullOrEmpty(s)).ToList();
+            if (sections.Count == 0) return new List<string>();
+
+            for (int i = 0; i < sections.Count; i++)
             {
-                // [] ではなく全角の ＜ ＞ に置換してMarkdownのパース誤動作を防ぐ
-                content = Regex.Replace(content, @"<(/?[a-zA-Z][^<>]*)>", "＜$1＞");
+                sections[i] = ApplyContentOptions(sections[i]);
             }
 
-            // インデントを削除するオプションが有効な場合
-            // Markdownで4スペースがコードブロックとして解釈されるのを防ぐ
-            if (_settings.RemoveIndent)
-            {
-                // 複数行モード(?m)で行頭の空白文字(スペース、タブ)を削除
-                content = Regex.Replace(content, @"(?m)^[ \t]+", "");
-            }
-
-            // NotebookLM対策：ツールが出力する details/summary タグも置換対象にする
-            string detailsOpen = _settings.SanitizeHtmlTags ? "＜details＞" : "<details>";
-            string detailsClose = _settings.SanitizeHtmlTags ? "＜/details＞" : "</details>";
-            string summaryText = _settings.SanitizeHtmlTags ? "＜summary＞View content＜/summary＞" : "<summary>View content</summary>";
-
-            sb.AppendLine($"**File Content:**");
-            sb.AppendLine(detailsOpen);
-            sb.AppendLine(summaryText);
-            sb.AppendLine();
-            sb.AppendLine(content);
-            sb.AppendLine(detailsClose);
-            sb.AppendLine();
-
-            if (!_settings.OmitCodeBlockTicks)
-            {
-                sb.AppendLine(string.IsNullOrEmpty(language) ? "```" : $"```{language}");
-                sb.AppendLine(content);
-                sb.AppendLine("```");
-            }
-            sb.AppendLine();
-
-            return sb.ToString();
+            return RenderMarkdownParts(filePath, sections, language);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"   [Warning] Could not process file '{Path.GetFileName(filePath)}': {ex.Message}");
-            return string.Empty;
+            return new List<string>();
         }
+    }
+
+    /// <summary>
+    /// 出力オプション（HTMLタグの無害化・インデント削除）をコンテンツへ適用します。
+    /// Applies the output options (HTML sanitization and indent removal) to the content.
+    /// </summary>
+    /// <param name="content">対象のコンテンツ / The content to transform.</param>
+    /// <returns>オプション適用後のコンテンツ / The transformed content.</returns>
+    private string ApplyContentOptions(string content)
+    {
+        // HTMLタグを無害化するオプションが有効な場合
+        // "if (a < b)" 等を除外するため、"<" の直後にアルファベットか "/" が続くパターンのみ置換する
+        if (_settings.SanitizeHtmlTags)
+        {
+            // [] ではなく全角の ＜ ＞ に置換してMarkdownのパース誤動作を防ぐ
+            content = Regex.Replace(content, @"<(/?[a-zA-Z][^<>]*)>", "＜$1＞");
+        }
+
+        // インデントを削除するオプションが有効な場合
+        // Markdownで4スペースがコードブロックとして解釈されるのを防ぐ
+        if (_settings.RemoveIndent)
+        {
+            // 複数行モード(?m)で行頭の空白文字(スペース、タブ)を削除
+            content = Regex.Replace(content, @"(?m)^[ \t]+", "");
+        }
+
+        return content;
+    }
+
+    /// <summary>
+    /// セクション群をしきい値以下のパートへまとめ、各パートをMarkdownとして描画します。
+    /// 分割されるのは「しきい値を超える」かつ「セクションが2つ以上ある」場合のみです。
+    /// Packs the sections into parts under the threshold and renders each part as Markdown.
+    /// A file is split only when it exceeds the threshold *and* has more than one section.
+    /// </summary>
+    /// <param name="filePath">対象ファイルのパス / The path of the target file.</param>
+    /// <param name="sections">分割単位となるセクション群 / The sections that serve as split boundaries.</param>
+    /// <param name="language">コードブロックに付与する言語名 / The language name for the code block.</param>
+    /// <returns>描画されたパート一覧 / The rendered parts.</returns>
+    private List<string> RenderMarkdownParts(string filePath, List<string> sections, string language)
+    {
+        var packedParts = PackSections(sections, language);
+        var renderedParts = new List<string>(packedParts.Count);
+
+        for (int i = 0; i < packedParts.Count; i++)
+        {
+            // パートが1つだけのときは連番を付けず、従来と同じ見出しにする
+            // Keep the original heading when there is only one part.
+            string? partLabel = packedParts.Count > 1 ? $"{i + 1}/{packedParts.Count}" : null;
+            renderedParts.Add(RenderPart(filePath, packedParts[i], language, partLabel));
+        }
+
+        return renderedParts;
+    }
+
+    /// <summary>
+    /// セクション群を、レンダリング後のサイズがしきい値へ収まるようパートへまとめます。
+    /// 1つのセクションだけでしきい値を超える場合は、セクションの途中で切らずに超過させます。
+    /// Packs the sections into parts so that each rendered part fits within the threshold.
+    /// A section that exceeds the threshold on its own is left oversized rather than cut in half.
+    /// </summary>
+    /// <param name="sections">分割単位となるセクション群 / The sections that serve as split boundaries.</param>
+    /// <param name="language">コードブロックに付与する言語名 / The language name for the code block.</param>
+    /// <returns>パートごとにまとめられたセクション群 / The sections grouped per part.</returns>
+    private List<List<string>> PackSections(List<string> sections, string language)
+    {
+        // セクションが1つしかなければ分割の余地がないため、そのまま1パートとする
+        // A single section leaves nothing to split, so it becomes one part as-is.
+        if (sections.Count <= 1) return new List<List<string>> { sections };
+
+        // しきい値と比較するのは、共通ヘッダやdetails・コードブロックまで含めたレンダリング後のサイズ。
+        // コードブロックを出力する場合は本文が2回出力されるため、セクションのコストも2倍になる。
+        // The threshold is compared against the rendered size, including the header, the details block
+        // and the code block. When the code block is emitted the content appears twice, so each
+        // section costs twice as much.
+        long overhead = Encoding.UTF8.GetByteCount(RenderPart("dummy", new List<string>(), language, $"{sections.Count}/{sections.Count}"));
+        int contentCopies = _settings.OmitCodeBlockTicks ? 1 : 2;
+
+        var parts = new List<List<string>>();
+        var current = new List<string>();
+        long currentSize = 0;
+
+        foreach (var section in sections)
+        {
+            long sectionSize = Encoding.UTF8.GetByteCount(section) * contentCopies;
+
+            if (current.Count > 0 && overhead + currentSize + sectionSize > _settings.MaxOutputSize)
+            {
+                parts.Add(current);
+                current = new List<string>();
+                currentSize = 0;
+            }
+
+            current.Add(section);
+            currentSize += sectionSize;
+        }
+
+        if (current.Count > 0) parts.Add(current);
+
+        return parts;
+    }
+
+    /// <summary>
+    /// 1つのパートをMarkdownとして描画します。分割時もファイル名と相対パスを共通ヘッダとして再掲し、
+    /// details とコードブロックはパート内で必ず開いて閉じます。
+    /// Renders a single part as Markdown. The file name and relative path are repeated as a shared
+    /// header even when split, and the details block and code block are always opened and closed
+    /// within the same part.
+    /// </summary>
+    /// <param name="filePath">対象ファイルのパス / The path of the target file.</param>
+    /// <param name="sections">このパートへ含めるセクション群 / The sections to include in this part.</param>
+    /// <param name="language">コードブロックに付与する言語名 / The language name for the code block.</param>
+    /// <param name="partLabel">"2/3" 形式のパート表記。分割されていない場合は null / The "2/3" style part label, or null when not split.</param>
+    /// <returns>描画されたMarkdown / The rendered Markdown.</returns>
+    private string RenderPart(string filePath, List<string> sections, string language, string? partLabel)
+    {
+        string relativePath = Path.GetRelativePath(_settings.ProjectPath, filePath);
+        string content = string.Join(Environment.NewLine, sections);
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine(partLabel == null
+            ? $"## {Path.GetFileName(filePath)}"
+            : $"## {Path.GetFileName(filePath)} ({partLabel})");
+        sb.AppendLine();
+        sb.AppendLine($"**Relative Path:** `{relativePath}`");
+        sb.AppendLine();
+
+        if (partLabel != null)
+        {
+            sb.AppendLine($"**Part:** {partLabel}");
+            sb.AppendLine();
+        }
+
+        // NotebookLM対策：ツールが出力する details/summary タグも置換対象にする
+        string detailsOpen = _settings.SanitizeHtmlTags ? "＜details＞" : "<details>";
+        string detailsClose = _settings.SanitizeHtmlTags ? "＜/details＞" : "</details>";
+        string summaryText = _settings.SanitizeHtmlTags ? "＜summary＞View content＜/summary＞" : "<summary>View content</summary>";
+
+        sb.AppendLine($"**File Content:**");
+        sb.AppendLine(detailsOpen);
+        sb.AppendLine(summaryText);
+        sb.AppendLine();
+        sb.AppendLine(content);
+        sb.AppendLine(detailsClose);
+        sb.AppendLine();
+
+        if (!_settings.OmitCodeBlockTicks)
+        {
+            sb.AppendLine(string.IsNullOrEmpty(language) ? "```" : $"```{language}");
+            sb.AppendLine(content);
+            sb.AppendLine("```");
+        }
+        sb.AppendLine();
+
+        return sb.ToString();
     }
 
 
     /// <summary>
-    /// Excelファイルを読み込み、マークダウン形式のテキストとして返します。
+    /// Excelファイルを読み込み、シート単位のセクションに分けたマークダウンとして返します。
     /// シートごとの図形・画像OCRのテキストを受け取り、対応するシートのセクション内へ出力します。
-    /// Reads an Excel file and returns it as Markdown formatted text.
+    /// Reads an Excel file and returns it as Markdown split into one section per sheet.
     /// Takes the per-sheet shape and image OCR text and emits it inside the matching sheet's section.
     /// </summary>
     /// <param name="filePath">読み込むExcelファイルのパス / The path of the Excel file to read.</param>
     /// <param name="shapesBySheet">シート名をキーとした図形・画像OCRのテキスト / Shape and image OCR text keyed by sheet name.</param>
-   private string ReadExcelFile(string filePath, IReadOnlyDictionary<string, string> shapesBySheet)
+    /// <returns>シートごとのセクション一覧 / The list of sections, one per sheet.</returns>
+   private List<string> ReadExcelFile(string filePath, IReadOnlyDictionary<string, string> shapesBySheet)
     {
-        var sb = new StringBuilder();
+        var sections = new List<string>();
 
         // どのシートにも差し込めなかったぶんを検出するため、消化済みのシート名を記録する
         // Track consumed sheet names so that leftovers can be detected afterwards.
@@ -288,6 +428,10 @@ public class FileContentGenerator
 
                 foreach (DataTable table in result.Tables)
                 {
+                    // シートごとに独立したセクションとして組み立てる（容量分割の単位になる）
+                    // Build each sheet as its own section, which is the unit used for size splitting.
+                    var sb = new StringBuilder();
+
                     // シート名を見出しにする
                     // Use sheet name as a heading.
                     sb.AppendLine($"### {table.TableName}");
@@ -327,23 +471,25 @@ public class FileContentGenerator
                         sb.AppendLine(sheetShapes.TrimEnd());
                     }
 
-                    sb.AppendLine();
+                    sections.Add(sb.ToString());
                 }
             }
         }
 
-        // シート名が一致せず差し込めなかったぶんは、内容を失わないよう末尾へ出力する
-        // Emit anything that could not be matched to a sheet at the end so that no content is lost.
+        // シート名が一致せず差し込めなかったぶんは、内容を失わないよう末尾へ独立したセクションとして出力する
+        // Emit anything that could not be matched to a sheet as its own trailing section, so that no
+        // content is lost.
         foreach (var pair in shapesBySheet)
         {
             if (consumedSheets.Contains(pair.Key) || string.IsNullOrWhiteSpace(pair.Value)) continue;
 
-            sb.AppendLine($"### [Shapes, TextBoxes & Images] ({pair.Key})");
-            sb.AppendLine(pair.Value.TrimEnd());
-            sb.AppendLine();
+            var leftover = new StringBuilder();
+            leftover.AppendLine($"### [Shapes, TextBoxes & Images] ({pair.Key})");
+            leftover.AppendLine(pair.Value.TrimEnd());
+            sections.Add(leftover.ToString());
         }
 
-        return sb.ToString();
+        return sections;
     }
 
     /// <summary>
@@ -568,12 +714,16 @@ public class FileContentGenerator
     }
 
     /// <summary>
-    /// Wordファイル(.docx)を読み込み、プレーンテキストとして返します。
-    /// Reads a Word file (.docx) and returns it as plain text.
+    /// Wordファイル(.docx)を読み込み、見出し(H1)単位のセクションに分けて返します。
+    /// 見出しスタイルが使われていない文書は、分割できる境界が無いため単一のセクションになります。
+    /// Reads a Word file (.docx) and returns it split into one section per top-level (H1) heading.
+    /// A document that does not use heading styles has no split boundary and yields a single section.
     /// </summary>
-    private string ReadWordFile(string filePath)
+    /// <param name="filePath">読み込むWordファイルのパス / The path of the Word file to read.</param>
+    /// <returns>見出し単位のセクション一覧 / The list of sections, one per top-level heading.</returns>
+    private List<string> ReadWordFile(string filePath)
     {
-        var sb = new StringBuilder();
+        var sectionBuilder = new WordSectionBuilder();
         try
         {
             using (WordprocessingDocument wordDoc = WordprocessingDocument.Open(filePath, false))
@@ -589,12 +739,19 @@ public class FileContentGenerator
                     ? new WordImageContext(mainPart)
                     : null;
 
+                // 見出しスタイルの判定表をスタイル定義から作る（styleId の文字列比較では判定できないため）
+                // Build the heading style lookup from the style definitions, because comparing the
+                // styleId as a string is not reliable.
+                var headingLevels = mainPart != null
+                    ? BuildWordHeadingLevelsByStyleId(mainPart)
+                    : new Dictionary<string, int>(StringComparer.Ordinal);
+
                 var body = mainPart?.Document?.Body;
                 if (body != null)
                 {
                     // 本文のブロック要素(段落・表)を出現順に抽出する
                     // Extract the block elements (paragraphs and tables) of the body in document order.
-                    AppendWordBlocks(body, sb, imageContext);
+                    AppendWordBlocks(body, sectionBuilder, imageContext, headingLevels);
                 }
 
                 // 本文から参照されていない画像（差し込み位置を特定できないもの）は、
@@ -615,8 +772,8 @@ public class FileContentGenerator
 
                     if (unreferenced.Length > 0)
                     {
-                        sb.AppendLine("\n### [Embedded Images]");
-                        sb.Append(unreferenced);
+                        sectionBuilder.Current.AppendLine("\n### [Embedded Images]");
+                        sectionBuilder.Current.Append(unreferenced);
                     }
                 }
             }
@@ -624,10 +781,128 @@ public class FileContentGenerator
         catch (Exception ex)
         {
             Console.WriteLine($"   [Warning] Could not read Word file '{Path.GetFileName(filePath)}': {ex.Message}");
-            return string.Empty;
+            return new List<string>();
         }
 
-        return sb.ToString();
+        return sectionBuilder.ToSections();
+    }
+
+    /// <summary>
+    /// スタイル定義から、スタイルIDと見出しレベル(1始まり)の対応表を作ります。
+    /// 日本語版Wordでは組み込み見出しのスタイルIDが "a3" のような自動生成値になることがあるため、
+    /// スタイルIDの文字列比較ではなく、スタイル定義の正規名("heading 1")とアウトラインレベルで判定します。
+    /// Builds a lookup from style ID to heading level (1-based) using the style definitions.
+    /// Japanese Word can assign auto-generated style IDs such as "a3" to the built-in heading styles,
+    /// so the canonical style name ("heading 1") and the outline level are used instead of the ID.
+    /// </summary>
+    /// <param name="mainPart">対象のメインドキュメントパート / The main document part to inspect.</param>
+    /// <returns>スタイルIDをキーとした見出しレベルの対応表 / The heading levels keyed by style ID.</returns>
+    private static Dictionary<string, int> BuildWordHeadingLevelsByStyleId(MainDocumentPart mainPart)
+    {
+        var headingLevels = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        var styles = mainPart.StyleDefinitionsPart?.Styles;
+        if (styles == null) return headingLevels;
+
+        foreach (var style in styles.Elements<DocumentFormat.OpenXml.Wordprocessing.Style>())
+        {
+            string? styleId = style.StyleId?.Value;
+            if (string.IsNullOrEmpty(styleId)) continue;
+
+            int? level = ParseHeadingLevelFromName(style.StyleName?.Val?.Value)
+                ?? ToHeadingLevel(style.StyleParagraphProperties?.OutlineLevel?.Val?.Value);
+
+            if (level != null) headingLevels[styleId!] = level.Value;
+        }
+
+        return headingLevels;
+    }
+
+    /// <summary>
+    /// 段落が見出しかどうかを判定し、見出しレベル(1始まり)を返します。見出しでない場合は null を返します。
+    /// Determines whether a paragraph is a heading and returns its level (1-based), or null otherwise.
+    /// </summary>
+    /// <param name="paragraph">判定対象の段落 / The paragraph to inspect.</param>
+    /// <param name="headingLevels">スタイルIDをキーとした見出しレベルの対応表 / The heading levels keyed by style ID.</param>
+    /// <returns>見出しレベル、または null / The heading level, or null.</returns>
+    private static int? GetWordHeadingLevel(DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph, Dictionary<string, int> headingLevels)
+    {
+        var properties = paragraph.ParagraphProperties;
+        string? styleId = properties?.ParagraphStyleId?.Val?.Value;
+
+        if (!string.IsNullOrEmpty(styleId))
+        {
+            if (headingLevels.TryGetValue(styleId!, out int level)) return level;
+
+            // スタイル定義を持たない文書向けのフォールバック（styleId が "Heading1" 等の場合）
+            // Fallback for documents without style definitions (e.g. a styleId of "Heading1").
+            int? levelFromId = ParseHeadingLevelFromName(styleId);
+            if (levelFromId != null) return levelFromId;
+        }
+
+        // 段落自身にアウトラインレベルが指定されている場合
+        // When the paragraph itself carries an outline level.
+        return ToHeadingLevel(properties?.OutlineLevel?.Val?.Value);
+    }
+
+    /// <summary>
+    /// スタイル名("heading 1", "Heading1" など)から見出しレベルを取り出します。
+    /// Extracts the heading level from a style name such as "heading 1" or "Heading1".
+    /// </summary>
+    private static int? ParseHeadingLevelFromName(string? styleName)
+    {
+        if (string.IsNullOrEmpty(styleName)) return null;
+
+        var match = Regex.Match(styleName!, @"^heading\s*([1-9])$", RegexOptions.IgnoreCase);
+        return match.Success ? int.Parse(match.Groups[1].Value) : (int?)null;
+    }
+
+    /// <summary>
+    /// アウトラインレベル(0始まり)を見出しレベル(1始まり)へ変換します。
+    /// 本文を表す値(9)や未設定の場合は null を返します。
+    /// Converts an outline level (0-based) into a heading level (1-based).
+    /// Returns null when the value represents body text (9) or is not set.
+    /// </summary>
+    private static int? ToHeadingLevel(int? outlineLevel)
+        => outlineLevel is >= 0 and <= 8 ? outlineLevel + 1 : null;
+
+    /// <summary>
+    /// Word文書のセクション（H1見出し単位）を組み立てるための状態を保持します。
+    /// Holds the state used to build a Word document's sections, one per top-level (H1) heading.
+    /// </summary>
+    private sealed class WordSectionBuilder
+    {
+        private readonly List<string> _sections = new List<string>();
+        private StringBuilder _current = new StringBuilder();
+
+        /// <summary>
+        /// 現在組み立て中のセクションの出力先 / The destination of the section currently being built.
+        /// </summary>
+        public StringBuilder Current => _current;
+
+        /// <summary>
+        /// 新しいセクションを開始します。H1見出しを出力する直前に呼び出します。
+        /// 最初の見出しより前の本文（前書きなど）は、独立した先頭のセクションになります。
+        /// Starts a new section, called just before emitting a top-level heading. Any body text before
+        /// the first heading (such as a preamble) becomes its own leading section.
+        /// </summary>
+        public void StartNewSection()
+        {
+            if (_current.Length == 0) return;
+
+            _sections.Add(_current.ToString());
+            _current = new StringBuilder();
+        }
+
+        /// <summary>
+        /// 組み立て済みのセクション一覧を返します。
+        /// Returns the sections that have been built.
+        /// </summary>
+        public List<string> ToSections()
+        {
+            if (_current.Length > 0) _sections.Add(_current.ToString());
+            return _sections;
+        }
     }
 
     /// <summary>
@@ -637,26 +912,27 @@ public class FileContentGenerator
     /// order. Tables are converted to Markdown table syntax so that their cell structure is preserved.
     /// </summary>
     /// <param name="container">走査対象の要素（本文やコンテンツコントロール等） / The element to walk (body, content control, etc.).</param>
-    /// <param name="sb">出力先のStringBuilder / The destination StringBuilder.</param>
+    /// <param name="sectionBuilder">セクションの組み立て先 / The section builder to write into.</param>
     /// <param name="imageContext">画像OCRの処理状態。OCRが無効な場合は null / The image OCR state, or null when OCR is disabled.</param>
-    private void AppendWordBlocks(OpenXmlElement container, StringBuilder sb, WordImageContext? imageContext)
+    /// <param name="headingLevels">スタイルIDをキーとした見出しレベルの対応表 / The heading levels keyed by style ID.</param>
+    private void AppendWordBlocks(OpenXmlElement container, WordSectionBuilder sectionBuilder, WordImageContext? imageContext, Dictionary<string, int> headingLevels)
     {
         foreach (var element in container.Elements())
         {
             switch (element)
             {
                 case DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph:
-                    sb.AppendLine(paragraph.InnerText);
+                    AppendWordParagraph(paragraph, sectionBuilder, headingLevels);
                     // 画像は段落内に配置されるため、その段落の直後へOCR結果を出力する
                     // Images live inside paragraphs, so emit their OCR right after that paragraph.
-                    sb.Append(ExtractWordImagesOcr(paragraph, imageContext));
+                    sectionBuilder.Current.Append(ExtractWordImagesOcr(paragraph, imageContext));
                     break;
 
                 case DocumentFormat.OpenXml.Wordprocessing.Table table:
-                    AppendWordTable(table, sb);
+                    AppendWordTable(table, sectionBuilder.Current);
                     // 表の途中に差し込むとMarkdownのテーブルが崩れるため、表の直後へまとめて出力する
                     // Inserting inside the table would break the Markdown table, so emit it right after.
-                    sb.Append(ExtractWordImagesOcr(table, imageContext));
+                    sectionBuilder.Current.Append(ExtractWordImagesOcr(table, imageContext));
                     break;
 
                 default:
@@ -666,11 +942,44 @@ public class FileContentGenerator
                     // Table contents are handled in the case above, so nothing is emitted twice.
                     if (element.HasChildren)
                     {
-                        AppendWordBlocks(element, sb, imageContext);
+                        AppendWordBlocks(element, sectionBuilder, imageContext, headingLevels);
                     }
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Wordの段落を追記します。見出しスタイルの段落はMarkdownの見出しへ変換し、
+    /// 最上位(H1)の見出しでは容量分割の境界となる新しいセクションを開始します。
+    /// Appends a Word paragraph. Paragraphs styled as headings are converted into Markdown headings,
+    /// and a top-level (H1) heading starts a new section, which is the boundary used for size splitting.
+    /// </summary>
+    /// <param name="paragraph">対象の段落 / The paragraph to append.</param>
+    /// <param name="sectionBuilder">セクションの組み立て先 / The section builder to write into.</param>
+    /// <param name="headingLevels">スタイルIDをキーとした見出しレベルの対応表 / The heading levels keyed by style ID.</param>
+    private static void AppendWordParagraph(DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph, WordSectionBuilder sectionBuilder, Dictionary<string, int> headingLevels)
+    {
+        string text = paragraph.InnerText;
+
+        // 文字の無い段落は見出しとして扱わない（空の見出しでセクションを切らないため）
+        // A paragraph without text is not treated as a heading, so empty headings do not split sections.
+        int? headingLevel = string.IsNullOrWhiteSpace(text) ? null : GetWordHeadingLevel(paragraph, headingLevels);
+
+        if (headingLevel == null)
+        {
+            sectionBuilder.Current.AppendLine(text);
+            return;
+        }
+
+        // H1のみを分割の境界とする（H2以降で細切れにしない）
+        // Only H1 acts as a split boundary, so deeper headings do not fragment the output.
+        if (headingLevel == 1) sectionBuilder.StartNewSection();
+
+        // "##" はファイル名の見出しに使っているため、WordのH1は "###" から始める
+        // "##" is used for the file name heading, so a Word H1 starts at "###".
+        string hashes = new string('#', Math.Min(headingLevel.Value + 2, 6));
+        sectionBuilder.Current.AppendLine($"{hashes} {text}");
     }
 
     /// <summary>
@@ -865,12 +1174,14 @@ public class FileContentGenerator
     }
 
     /// <summary>
-    /// PowerPointファイル(.pptx)を読み込み、スライドごとのテキストを抽出して返します。
-    /// Reads a PowerPoint file (.pptx) and returns extracted text per slide.
+    /// PowerPointファイル(.pptx)を読み込み、スライド単位のセクションに分けて返します。
+    /// Reads a PowerPoint file (.pptx) and returns it split into one section per slide.
     /// </summary>
-    private string ReadPowerPointFile(string filePath)
+    /// <param name="filePath">読み込むPowerPointファイルのパス / The path of the PowerPoint file to read.</param>
+    /// <returns>スライドごとのセクション一覧 / The list of sections, one per slide.</returns>
+    private List<string> ReadPowerPointFile(string filePath)
     {
-        var sb = new StringBuilder();
+        var sections = new List<string>();
         try
         {
             using (PresentationDocument presentationDoc = PresentationDocument.Open(filePath, false))
@@ -892,8 +1203,11 @@ public class FileContentGenerator
                                 SlidePart slidePart = (SlidePart)presentationPart.GetPartById(slideId.RelationshipId.Value!);
                                 if (slidePart != null && slidePart.Slide != null)
                                 {
+                                    // スライドごとに独立したセクションとして組み立てる（容量分割の単位になる）
+                                    // Build each slide as its own section, the unit used for size splitting.
+                                    var sb = new StringBuilder();
                                     sb.AppendLine($"### Slide {slideIndex}");
-                                    
+
                                     // スライド内のテキスト要素(Drawing.Text)をすべて抽出
                                     foreach (var text in slidePart.Slide.Descendants<DocumentFormat.OpenXml.Drawing.Text>())
                                     {
@@ -913,7 +1227,7 @@ public class FileContentGenerator
                                         }
                                     }
 
-                                    sb.AppendLine();
+                                    sections.Add(sb.ToString());
                                 }
                             }
                             slideIndex++;
@@ -925,15 +1239,17 @@ public class FileContentGenerator
         catch (Exception ex)
         {
             Console.WriteLine($"   [Warning] Could not read PowerPoint file '{Path.GetFileName(filePath)}': {ex.Message}");
-            return string.Empty;
+            return new List<string>();
         }
 
-        return sb.ToString();
+        return sections;
     }
 
     /// <summary>
     /// プロジェクト内の各ファイルに対して、個別のMarkdownコンテンツを生成します。
+    /// しきい値を超えたファイルは複数のパートへ分割され、ファイル名に連番が付きます。
     /// Generates individual Markdown content for each file in the project.
+    /// Files exceeding the threshold are split into several parts, numbered in the file name.
     /// </summary>
     /// <returns>相対ファイルパス（拡張子.md付き）とMarkdownコンテンツのペアのリスト。 / A list of pairs of relative file paths (with .md extension) and Markdown content.</returns>
     public List<(string RelativePath, string Content)> GeneratePerFile()
@@ -949,15 +1265,25 @@ public class FileContentGenerator
         // [reduce] Aggregate the generated results in original order (sequential).
         for (int i = 0; i < allFiles.Count; i++)
         {
-            string fileMarkdown = markdownByIndex[i];
-            if (string.IsNullOrEmpty(fileMarkdown)) continue;
+            var parts = markdownByIndex[i];
+            if (parts.Count == 0) continue;
 
             // 元の相対パスを取得し、末尾に .md を追加する（例: "src/Utils.cs" -> "src/Utils.cs.md"）
             // Get the original relative path and append .md to the end (e.g., "src/Utils.cs" -> "src/Utils.cs.md").
             string relativePath = Path.GetRelativePath(_settings.ProjectPath, allFiles[i]);
-            string markdownRelativePath = relativePath + ".md";
 
-            fileContents.Add((markdownRelativePath, fileMarkdown));
+            for (int partIndex = 0; partIndex < parts.Count; partIndex++)
+            {
+                // 分割された場合のみ連番を挟む（例: "src/Utils.cs.1.md"）。
+                // 分割されていないファイルの名前は従来どおり変わらない。
+                // Insert a sequence number only when split (e.g. "src/Utils.cs.1.md").
+                // The name of an unsplit file stays exactly as before.
+                string markdownRelativePath = parts.Count == 1
+                    ? relativePath + ".md"
+                    : $"{relativePath}.{partIndex + 1}.md";
+
+                fileContents.Add((markdownRelativePath, parts[partIndex]));
+            }
         }
 
         return fileContents;
@@ -971,9 +1297,9 @@ public class FileContentGenerator
     /// </summary>
     /// <param name="allFiles">処理対象のファイルパス一覧 / The list of file paths to process.</param>
     /// <returns>各ファイルの生成結果（インデックス順） / The generated content per file, in index order.</returns>
-    private string[] GenerateMarkdownInParallel(List<string> allFiles)
+    private List<string>[] GenerateMarkdownInParallel(List<string> allFiles)
     {
-        var results = new string[allFiles.Count];
+        var results = new List<string>[allFiles.Count];
 
         // 並列度は論理プロセッサ数に制限する。無制限だと画像ごとにTesseractEngineを大量生成し、
         // メモリやネイティブライブラリへの負荷が過大になるため。
@@ -984,13 +1310,13 @@ public class FileContentGenerator
             MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
         };
 
-        // GenerateMarkdownForFile は共有可変状態を持たない（_settings は読み取り専用、一時ファイルは一意名、
+        // GenerateMarkdownPartsForFile は共有可変状態を持たない（_settings は読み取り専用、一時ファイルは一意名、
         // 例外は内部で捕捉）ため、ファイル単位の並列実行はスレッドセーフである。
-        // GenerateMarkdownForFile has no shared mutable state (read-only _settings, unique temp file names,
-        // exceptions caught internally), so per-file parallel execution is thread-safe.
+        // GenerateMarkdownPartsForFile has no shared mutable state (read-only _settings, unique temp file
+        // names, exceptions caught internally), so per-file parallel execution is thread-safe.
         Parallel.For(0, allFiles.Count, parallelOptions, i =>
         {
-            results[i] = GenerateMarkdownForFile(allFiles[i]);
+            results[i] = GenerateMarkdownPartsForFile(allFiles[i]);
         });
 
         return results;
