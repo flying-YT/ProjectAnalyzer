@@ -7,6 +7,9 @@ using System.IO;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using A = DocumentFormat.OpenXml.Drawing;
+using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 
 namespace ProjectAnalyzer.Core.Tests;
 
@@ -225,6 +228,74 @@ public class FileContentGeneratorTests : IDisposable
     }
 
     [Fact]
+    public void Generate_PlacesEmbeddedImageOcr_AtTheParagraphWhereTheImageAppears()
+    {
+        // Arrange: 段落 → 画像の段落 → 段落 の順に並んだ .docx を作成し、OCRを有効にする
+        // Create a .docx laid out as paragraph -> image paragraph -> paragraph, with OCR enabled.
+        var tempFile = Path.Combine(_tempDir, "InlineImageDoc.docx");
+        CreateWordFileWithInlineImage(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true,
+            enableOcr: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: OCR結果が、画像を含む段落の位置（前後の段落の間）へ出力されていること。
+        // OCRの成否は環境に依存するため、必ず出力される見出し行の位置で検証する。
+        // The OCR result must be emitted between the surrounding paragraphs. OCR success depends on the
+        // environment, so the position is verified with the header line that is always emitted.
+        int beforeIndex = content.IndexOf("画像の前の段落", StringComparison.Ordinal);
+        int ocrIndex = content.IndexOf("--- Embedded Image 1", StringComparison.Ordinal);
+        int afterIndex = content.IndexOf("画像の後の段落", StringComparison.Ordinal);
+
+        Assert.True(beforeIndex >= 0, "画像の前の段落が抽出されていません。");
+        Assert.True(ocrIndex >= 0, "埋め込み画像のOCR結果が出力されていません。");
+        Assert.True(afterIndex >= 0, "画像の後の段落が抽出されていません。");
+        Assert.True(beforeIndex < ocrIndex && ocrIndex < afterIndex, "OCR結果が画像の位置に出力されていません。");
+
+        // 位置が特定できた画像は、末尾のフォールバックセクションへは出力されないこと
+        // An image whose position was determined must not also land in the trailing fallback section.
+        Assert.DoesNotContain("[Embedded Images]", content);
+    }
+
+    [Fact]
+    public void Generate_PlacesUnreferencedImageOcr_AtTheEndOfTheDocument()
+    {
+        // Arrange: 本文から参照されていない画像を含む .docx を作成し、OCRを有効にする
+        // Create a .docx containing an image that is not referenced from the body, with OCR enabled.
+        var tempFile = Path.Combine(_tempDir, "OrphanImageDoc.docx");
+        CreateWordFileWithImage(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true,
+            enableOcr: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: 差し込み位置を特定できない画像は、取りこぼさず末尾のセクションへ出力されること
+        // An image whose position cannot be determined must still be emitted in the trailing section.
+        int bodyIndex = content.IndexOf("画像付きの段落", StringComparison.Ordinal);
+        int sectionIndex = content.IndexOf("### [Embedded Images]", StringComparison.Ordinal);
+
+        Assert.True(bodyIndex >= 0, "本文が抽出されていません。");
+        Assert.True(sectionIndex > bodyIndex, "参照されていない画像のセクションが本文の後に出力されていません。");
+        Assert.Contains("--- Embedded Image 1", content);
+    }
+
+    [Fact]
     public void Generate_OmitsCodeBlock_WhenOmitCodeBlockTicksIsTrue()
     {
         // Arrange
@@ -367,6 +438,65 @@ public class FileContentGeneratorTests : IDisposable
 
         mainPart.Document.Save();
     }
+
+    /// <summary>
+    /// テスト用に、本文の段落から参照された埋め込み画像を含む .docx ファイルを生成します。
+    /// </summary>
+    private static void CreateWordFileWithInlineImage(string path)
+    {
+        using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var mainPart = document.AddMainDocumentPart();
+        mainPart.Document = new Document(new Body());
+        var body = mainPart.Document.Body!;
+
+        var imagePart = mainPart.AddImagePart(ImagePartType.Png);
+        using (var imageStream = new MemoryStream(OnePixelPng))
+        {
+            imagePart.FeedData(imageStream);
+        }
+
+        body.AppendChild(CreateParagraph("画像の前の段落"));
+        body.AppendChild(CreateImageParagraph(mainPart.GetIdOfPart(imagePart)));
+        body.AppendChild(CreateParagraph("画像の後の段落"));
+
+        mainPart.Document.Save();
+    }
+
+    /// <summary>
+    /// 指定した関係IDの画像を参照する段落を生成します（Word本文に画像を配置する標準的な構造）。
+    /// </summary>
+    private static Paragraph CreateImageParagraph(string relationshipId)
+    {
+        var drawing = new Drawing(
+            new DW.Inline(
+                new DW.Extent { Cx = 990000L, Cy = 990000L },
+                new DW.DocProperties { Id = 1U, Name = "Picture 1" },
+                new A.Graphic(
+                    new A.GraphicData(
+                        new PIC.Picture(
+                            new PIC.NonVisualPictureProperties(
+                                new PIC.NonVisualDrawingProperties { Id = 0U, Name = "image.png" },
+                                new PIC.NonVisualPictureDrawingProperties()),
+                            new PIC.BlipFill(
+                                new A.Blip { Embed = relationshipId },
+                                new A.Stretch(new A.FillRectangle())),
+                            new PIC.ShapeProperties(
+                                new A.Transform2D(
+                                    new A.Offset { X = 0L, Y = 0L },
+                                    new A.Extents { Cx = 990000L, Cy = 990000L }),
+                                new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle })))
+                    {
+                        Uri = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+                    })));
+
+        return new Paragraph(new Run(drawing));
+    }
+
+    /// <summary>
+    /// 1x1ピクセルのPNG。OCRの結果は問わず、画像パーツの有無のみを検証するために使用します。
+    /// </summary>
+    private static byte[] OnePixelPng => Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=");
 
     private static Paragraph CreateParagraph(string text) => new Paragraph(new Run(new Text(text)));
 

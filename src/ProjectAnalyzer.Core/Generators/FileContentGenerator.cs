@@ -174,15 +174,21 @@ public class FileContentGenerator
             // Special handling for Excel files.
             if (extension == ".xlsx" || extension == ".xls" || extension == ".xlsm")
             {
-                content = ReadExcelFile(filePath);
-                if (extension == ".xlsx" || extension == ".xlsm")
+                // 図形テキストと画像OCRはシート単位で取得し、各シートのセクション内へ差し込む。
+                // 末尾へまとめると、セクション単位で分割したときにOCR結果が最後のチャンクへ偏るため。
+                // Collect shape text and image OCR per sheet and place them inside each sheet's section.
+                // Appending them at the end would skew all OCR results into the last chunk when the
+                // output is split section by section.
+                string? shapesError = null;
+                var shapesBySheet = (extension == ".xlsx" || extension == ".xlsm")
+                    ? ExtractExcelShapesAndImagesBySheet(filePath, out shapesError)
+                    : new Dictionary<string, string>();
+
+                content = ReadExcelFile(filePath, shapesBySheet);
+
+                if (shapesError != null)
                 {
-                    // ★ メソッド名を変更し、画像OCRも実行させる
-                    string shapesText = ExtractExcelShapesAndImagesText(filePath);
-                    if (!string.IsNullOrWhiteSpace(shapesText))
-                    {
-                        content += "\n### [Shapes, TextBoxes & Images]\n" + shapesText;
-                    }
+                    content += $"\n[Excel Extract Error: {shapesError}]\n";
                 }
             }
             // Wordファイル(.docx)の場合の特別処理
@@ -256,12 +262,20 @@ public class FileContentGenerator
 
     /// <summary>
     /// Excelファイルを読み込み、マークダウン形式のテキストとして返します。
+    /// シートごとの図形・画像OCRのテキストを受け取り、対応するシートのセクション内へ出力します。
     /// Reads an Excel file and returns it as Markdown formatted text.
+    /// Takes the per-sheet shape and image OCR text and emits it inside the matching sheet's section.
     /// </summary>
-   private string ReadExcelFile(string filePath)
+    /// <param name="filePath">読み込むExcelファイルのパス / The path of the Excel file to read.</param>
+    /// <param name="shapesBySheet">シート名をキーとした図形・画像OCRのテキスト / Shape and image OCR text keyed by sheet name.</param>
+   private string ReadExcelFile(string filePath, IReadOnlyDictionary<string, string> shapesBySheet)
     {
         var sb = new StringBuilder();
-        
+
+        // どのシートにも差し込めなかったぶんを検出するため、消化済みのシート名を記録する
+        // Track consumed sheet names so that leftovers can be detected afterwards.
+        var consumedSheets = new HashSet<string>();
+
         using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read))
         {
             // ExcelReaderFactory を使用してストリームから読み込む
@@ -301,62 +315,125 @@ public class FileContentGenerator
                         // Join with commas (CSV style) to make context easier for AI to interpret.
                         sb.AppendLine(string.Join(", ", rowValues));
                     }
+
+                    // このシートに属する図形・画像OCRを、シートのセクション内に続けて出力する
+                    // Emit the shapes and image OCR belonging to this sheet within the sheet's section.
+                    if (shapesBySheet.TryGetValue(table.TableName, out var sheetShapes)
+                        && !string.IsNullOrWhiteSpace(sheetShapes))
+                    {
+                        consumedSheets.Add(table.TableName);
+                        sb.AppendLine();
+                        sb.AppendLine("#### [Shapes, TextBoxes & Images]");
+                        sb.AppendLine(sheetShapes.TrimEnd());
+                    }
+
                     sb.AppendLine();
                 }
             }
+        }
+
+        // シート名が一致せず差し込めなかったぶんは、内容を失わないよう末尾へ出力する
+        // Emit anything that could not be matched to a sheet at the end so that no content is lost.
+        foreach (var pair in shapesBySheet)
+        {
+            if (consumedSheets.Contains(pair.Key) || string.IsNullOrWhiteSpace(pair.Value)) continue;
+
+            sb.AppendLine($"### [Shapes, TextBoxes & Images] ({pair.Key})");
+            sb.AppendLine(pair.Value.TrimEnd());
+            sb.AppendLine();
         }
 
         return sb.ToString();
     }
 
     /// <summary>
-    /// Excelファイル(.xlsx, .xlsm)から図形やテキストボックスの文字、および埋め込み画像のOCRテキストを抽出します。(デバッグ出力版)
+    /// Excelファイル(.xlsx, .xlsm)から図形やテキストボックスの文字、および埋め込み画像のOCRテキストを、
+    /// シート単位に分けて抽出します。呼び出し側が各シートのセクション内へ差し込めるようにするためです。
+    /// Extracts shape and text box text plus embedded image OCR text from an Excel file (.xlsx, .xlsm),
+    /// grouped per sheet so that the caller can place each group inside the matching sheet's section.
     /// </summary>
-    private string ExtractExcelShapesAndImagesText(string filePath)
+    /// <param name="filePath">読み込むExcelファイルのパス / The path of the Excel file to read.</param>
+    /// <param name="error">抽出中に発生したエラーのメッセージ（正常時は null） / The error message if extraction failed, otherwise null.</param>
+    /// <returns>シート名をキーとした抽出テキスト / The extracted text keyed by sheet name.</returns>
+    private Dictionary<string, string> ExtractExcelShapesAndImagesBySheet(string filePath, out string? error)
     {
-        var sb = new StringBuilder();
+        error = null;
+        var textBySheet = new Dictionary<string, string>();
+
         try
         {
             using (SpreadsheetDocument doc = SpreadsheetDocument.Open(filePath, false))
             {
-                if (doc.WorkbookPart?.WorksheetParts == null) return string.Empty;
-                
+                var workbookPart = doc.WorkbookPart;
+                if (workbookPart?.Workbook?.Sheets == null) return textBySheet;
+
+                // 画像番号はブック全体で通し番号にする
+                // Number the images sequentially across the whole workbook.
                 int imageCount = 1;
 
-                foreach (var sheetPart in doc.WorkbookPart.WorksheetParts)
+                // WorksheetPart を直接辿るとシート名が得られないため、ブックのシート定義から辿る。
+                // 定義順に処理することで、出力順序もブック上の並びと一致する。
+                // Iterating WorksheetParts directly does not give sheet names, so walk the workbook's
+                // sheet definitions instead. Their order also matches the sheet order in the workbook.
+                foreach (var sheet in workbookPart.Workbook.Sheets.Elements<DocumentFormat.OpenXml.Spreadsheet.Sheet>())
                 {
-                    if (sheetPart.DrawingsPart != null)
+                    string? sheetName = sheet.Name?.Value;
+                    string? relationshipId = sheet.Id?.Value;
+                    if (string.IsNullOrEmpty(sheetName) || string.IsNullOrEmpty(relationshipId)) continue;
+
+                    if (workbookPart.GetPartById(relationshipId) is not WorksheetPart sheetPart) continue;
+                    if (sheetPart.DrawingsPart == null) continue;
+
+                    var sb = new StringBuilder();
+
+                    // 1. 図形やテキストボックス内の文字データを抽出
+                    // 1. Extract the text inside shapes and text boxes.
+                    var worksheetDrawing = sheetPart.DrawingsPart.WorksheetDrawing;
+                    if (worksheetDrawing != null)
                     {
-                        // 1. 図形やテキストボックス内の文字データを抽出
-                        foreach (var text in sheetPart.DrawingsPart.WorksheetDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Text>())
+                        foreach (var text in worksheetDrawing.Descendants<DocumentFormat.OpenXml.Drawing.Text>())
                         {
                             if (!string.IsNullOrWhiteSpace(text.Text)) sb.AppendLine(text.Text);
                         }
+                    }
 
-                        // 2. 埋め込み画像の存在チェックとOCR
-                        if (sheetPart.DrawingsPart.ImageParts != null && sheetPart.DrawingsPart.ImageParts.Any())
+                    // 2. 埋め込み画像の存在チェックとOCR
+                    // 2. Check for embedded images and run OCR.
+                    if (sheetPart.DrawingsPart.ImageParts != null && sheetPart.DrawingsPart.ImageParts.Any())
+                    {
+                        if (!_settings.EnableOcr)
                         {
-                            if (!_settings.EnableOcr)
-                            {
-                                sb.AppendLine($"\n--- ⚠️ 画像が見つかりましたが、OCRが無効(--enable-ocrなし)のためスキップしました ---");
-                                continue;
-                            }
-
+                            sb.AppendLine($"\n--- ⚠️ 画像が見つかりましたが、OCRが無効(--enable-ocrなし)のためスキップしました ---");
+                        }
+                        else
+                        {
                             foreach (var imagePart in sheetPart.DrawingsPart.ImageParts)
                             {
                                 // 共通のOCR処理メソッドを呼び出し
+                                // Call the shared OCR processing method.
                                 sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
                             }
                         }
+                    }
+
+                    // 同名シートは存在しえないが、破損ファイル等での上書きを避けるため追記扱いにする
+                    // Duplicate sheet names cannot exist, but append rather than overwrite to be safe
+                    // against malformed files.
+                    if (sb.Length > 0)
+                    {
+                        textBySheet[sheetName!] = textBySheet.TryGetValue(sheetName!, out var existing)
+                            ? existing + sb.ToString()
+                            : sb.ToString();
                     }
                 }
             }
         }
         catch (Exception ex)
         {
-            sb.AppendLine($"\n[Excel Extract Error: {ex.Message}]");
+            error = ex.Message;
         }
-        return sb.ToString();
+
+        return textBySheet;
     }
 
     /// <summary>
@@ -501,23 +578,45 @@ public class FileContentGenerator
         {
             using (WordprocessingDocument wordDoc = WordprocessingDocument.Open(filePath, false))
             {
-                var body = wordDoc.MainDocumentPart?.Document?.Body;
+                var mainPart = wordDoc.MainDocumentPart;
+
+                // 画像OCRは、画像が実際に置かれている段落・表の直後へ出力する。
+                // 末尾へまとめると、セクション単位で分割したときにOCR結果が最後のチャンクへ偏るため。
+                // Emit image OCR right after the paragraph or table where the image actually appears.
+                // Appending it at the end would skew all OCR results into the last chunk when the
+                // output is split section by section.
+                var imageContext = (_settings.EnableOcr && mainPart != null)
+                    ? new WordImageContext(mainPart)
+                    : null;
+
+                var body = mainPart?.Document?.Body;
                 if (body != null)
                 {
                     // 本文のブロック要素(段落・表)を出現順に抽出する
                     // Extract the block elements (paragraphs and tables) of the body in document order.
-                    AppendWordBlocks(body, sb);
+                    AppendWordBlocks(body, sb, imageContext);
                 }
 
-                // 埋め込み画像の存在チェックとOCR
-                if (_settings.EnableOcr && wordDoc.MainDocumentPart?.ImageParts != null && wordDoc.MainDocumentPart.ImageParts.Any())
+                // 本文から参照されていない画像（差し込み位置を特定できないもの）は、
+                // 取りこぼさないよう従来どおり末尾へまとめて出力する。
+                // Images not referenced from the body (whose position cannot be determined) are still
+                // emitted together at the end, as before, so that nothing is lost.
+                if (imageContext != null)
                 {
-                    sb.AppendLine("\n### [Embedded Images]");
-                    int imageCount = 1;
-                    foreach (var imagePart in wordDoc.MainDocumentPart.ImageParts)
+                    var unreferenced = new StringBuilder();
+                    foreach (var imagePart in imageContext.MainPart.ImageParts)
                     {
+                        if (!imageContext.MarkProcessed(imagePart)) continue;
+
                         // 共通のOCR処理メソッドを呼び出し
-                        sb.Append(ProcessImagePartOcr(imagePart, ref imageCount));
+                        // Call the shared OCR processing method.
+                        unreferenced.Append(ProcessImagePartOcr(imagePart, ref imageContext.ImageCount));
+                    }
+
+                    if (unreferenced.Length > 0)
+                    {
+                        sb.AppendLine("\n### [Embedded Images]");
+                        sb.Append(unreferenced);
                     }
                 }
             }
@@ -539,7 +638,8 @@ public class FileContentGenerator
     /// </summary>
     /// <param name="container">走査対象の要素（本文やコンテンツコントロール等） / The element to walk (body, content control, etc.).</param>
     /// <param name="sb">出力先のStringBuilder / The destination StringBuilder.</param>
-    private void AppendWordBlocks(OpenXmlElement container, StringBuilder sb)
+    /// <param name="imageContext">画像OCRの処理状態。OCRが無効な場合は null / The image OCR state, or null when OCR is disabled.</param>
+    private void AppendWordBlocks(OpenXmlElement container, StringBuilder sb, WordImageContext? imageContext)
     {
         foreach (var element in container.Elements())
         {
@@ -547,10 +647,16 @@ public class FileContentGenerator
             {
                 case DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph:
                     sb.AppendLine(paragraph.InnerText);
+                    // 画像は段落内に配置されるため、その段落の直後へOCR結果を出力する
+                    // Images live inside paragraphs, so emit their OCR right after that paragraph.
+                    sb.Append(ExtractWordImagesOcr(paragraph, imageContext));
                     break;
 
                 case DocumentFormat.OpenXml.Wordprocessing.Table table:
                     AppendWordTable(table, sb);
+                    // 表の途中に差し込むとMarkdownのテーブルが崩れるため、表の直後へまとめて出力する
+                    // Inserting inside the table would break the Markdown table, so emit it right after.
+                    sb.Append(ExtractWordImagesOcr(table, imageContext));
                     break;
 
                 default:
@@ -560,11 +666,121 @@ public class FileContentGenerator
                     // Table contents are handled in the case above, so nothing is emitted twice.
                     if (element.HasChildren)
                     {
-                        AppendWordBlocks(element, sb);
+                        AppendWordBlocks(element, sb, imageContext);
                     }
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// 指定要素の中から参照されている埋め込み画像をOCRし、Markdownとして返します。
+    /// 一度処理した画像は再処理しないため、同じ画像が複数回参照されていても出力は1回だけです。
+    /// Runs OCR on the embedded images referenced within the given element and returns it as Markdown.
+    /// Each image is processed only once, so an image referenced multiple times is emitted only once.
+    /// </summary>
+    /// <param name="container">走査対象の要素（段落や表） / The element to walk (a paragraph or a table).</param>
+    /// <param name="imageContext">画像OCRの処理状態。OCRが無効な場合は null / The image OCR state, or null when OCR is disabled.</param>
+    /// <returns>生成されたOCR結果のMarkdown / The generated OCR result as Markdown.</returns>
+    private string ExtractWordImagesOcr(OpenXmlElement container, WordImageContext? imageContext)
+    {
+        if (imageContext == null) return string.Empty;
+
+        var sb = new StringBuilder();
+
+        foreach (string relationshipId in GetWordImageRelationshipIds(container))
+        {
+            if (!imageContext.TryGetImagePart(relationshipId, out var imagePart)) continue;
+            if (!imageContext.MarkProcessed(imagePart)) continue;
+
+            // 共通のOCR処理メソッドを呼び出し
+            // Call the shared OCR processing method.
+            sb.Append(ProcessImagePartOcr(imagePart, ref imageContext.ImageCount));
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 要素の配下から、画像への参照ID(リレーションシップID)を出現順に列挙します。
+    /// 現行形式(DrawingMLの a:blip)と旧形式(VMLの v:imagedata)の双方に対応します。
+    /// Enumerates the relationship IDs referencing images under an element, in document order.
+    /// Both the current format (DrawingML a:blip) and the legacy format (VML v:imagedata) are handled.
+    /// </summary>
+    /// <param name="container">走査対象の要素 / The element to walk.</param>
+    /// <returns>画像への参照IDの列挙 / The enumeration of relationship IDs referencing images.</returns>
+    private static IEnumerable<string> GetWordImageRelationshipIds(OpenXmlElement container)
+    {
+        foreach (var element in container.Descendants())
+        {
+            switch (element)
+            {
+                case DocumentFormat.OpenXml.Drawing.Blip blip when !string.IsNullOrEmpty(blip.Embed?.Value):
+                    yield return blip.Embed!.Value!;
+                    break;
+
+                case DocumentFormat.OpenXml.Vml.ImageData imageData when !string.IsNullOrEmpty(imageData.RelationshipId?.Value):
+                    yield return imageData.RelationshipId!.Value!;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Word文書の埋め込み画像を出現位置ごとに処理するための状態を保持します。
+    /// Holds the state needed to process a Word document's embedded images at their positions.
+    /// </summary>
+    private sealed class WordImageContext
+    {
+        /// <summary>
+        /// 文書全体で通し番号にするための画像カウンタ。
+        /// `ref` 引数として渡すためプロパティではなくフィールドにしています。
+        /// The image counter, kept sequential across the document.
+        /// It is a field rather than a property so that it can be passed as a `ref` argument.
+        /// </summary>
+        public int ImageCount = 1;
+
+        /// <summary>
+        /// 本文が属するメインドキュメントパート / The main document part that owns the body.
+        /// </summary>
+        public MainDocumentPart MainPart { get; }
+
+        /// <summary>
+        /// 参照ID(r:embed / r:id)から画像パーツを引くための対応表 / A lookup from relationship ID to image part.
+        /// </summary>
+        private readonly Dictionary<string, ImagePart> _imagePartsByRelationshipId = new Dictionary<string, ImagePart>();
+
+        /// <summary>
+        /// OCR済み画像のパーツURI。二重出力の抑止と、末尾へ回す取りこぼしの判定に使います。
+        /// The URIs of images already processed, used to avoid duplicates and to detect leftovers.
+        /// </summary>
+        private readonly HashSet<string> _processedImageUris = new HashSet<string>();
+
+        public WordImageContext(MainDocumentPart mainPart)
+        {
+            MainPart = mainPart;
+
+            foreach (var pair in mainPart.Parts)
+            {
+                if (pair.OpenXmlPart is ImagePart imagePart)
+                {
+                    _imagePartsByRelationshipId[pair.RelationshipId] = imagePart;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 参照IDに対応する画像パーツを取得します。
+        /// Gets the image part corresponding to a relationship ID.
+        /// </summary>
+        public bool TryGetImagePart(string relationshipId, out ImagePart imagePart)
+            => _imagePartsByRelationshipId.TryGetValue(relationshipId, out imagePart!);
+
+        /// <summary>
+        /// 画像を処理済みとして記録します。まだ処理されていなかった場合のみ true を返します。
+        /// Marks an image as processed. Returns true only if it had not been processed yet.
+        /// </summary>
+        public bool MarkProcessed(ImagePart imagePart) => _processedImageUris.Add(imagePart.Uri.ToString());
     }
 
     /// <summary>
