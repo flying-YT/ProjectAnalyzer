@@ -27,6 +27,7 @@ The source code of a web application built with this library is publicly availab
 * **🧠 In-Memory Result Retrieval (When using DLL):** You can directly receive the analyzed text data in memory without writing to a file. It also provides an option to omit Markdown code block backticks (\`\`\`), making integration with other systems easy.
 * **🛡️ HTML Sanitization for NotebookLM:** By specifying the `--sanitize-html` option, HTML tags (e.g., `<details>`, `<div>`) included in the output are converted to a harmless format (full-width characters like `＜details＞`) to prevent AI from misinterpreting the code.
 * **⚡ Per-File Parallel Processing:** Content generation is executed in parallel on a per-file basis, leveraging multi-core CPUs to speed up the analysis. This is especially effective for a large number of files involving heavy work such as OCR (`--enable-ocr`). The degree of parallelism is automatically capped at the number of logical processors, and the output order and content remain identical to sequential execution.
+* **✂️ Section-Aware Splitting by Size:** To fit the upload limits of tools such as NotebookLM, the output Markdown is split to stay within the threshold given by `--max-size`. Splitting happens only at section boundaries — Excel sheets, PowerPoint slides and Word headings — so content is never cut off mid-section. Each split file repeats the file name and relative path as a shared header.
 
 ## **Requirements**
 
@@ -188,6 +189,30 @@ If no arguments are provided, the current directory will be analyzed, and the re
 * `--remove-indent`: Removes all leading indentation (spaces or tabs). Used to prevent misinterpretation of Markdown code blocks due to indentation (*Note: Be careful as this may break the structure of languages where indentation is meaningful, like Python*).
 * `--per-file`: Outputs individual Markdown files for each analyzed file.
 * `--enable-ocr`: Enables text extraction from images within Office files using OCR.
+* `--max-size <MB>`: Sets the size threshold per output Markdown file, in MB (default: `4`). Both `--max-size 8` and `--max-size=8` are accepted. See "Splitting by size" below.
+
+### **Splitting by size**
+
+When uploading the output to tools such as NotebookLM, you may hit the per-source limit.
+To avoid this, files exceeding the threshold are split into several parts.
+
+A file is split only when **both** of the following hold.
+
+1. The rendered size exceeds the `--max-size` threshold.
+2. The file has more than one section.
+
+| Type | Split unit |
+| --- | --- |
+| Excel (.xlsx / .xlsm / .xls) | Sheet |
+| PowerPoint (.pptx) | Slide |
+| Word (.docx) | Top-level heading (H1) |
+| Word (without heading styles), text and source code | Never split |
+
+* **A section is never cut in half.** When a single sheet or slide exceeds the threshold on its own, it is emitted oversized rather than being cut. The threshold is therefore best-effort, not a guarantee.
+* **Plain text and source code are never split.** Inferring a structure for them would mistake lines such as `### comment` in source code for headings.
+* **Every part repeats the file name, the relative path and a `**Part:** 2/3` label as a shared header.** The `<details>` tag and the code block backticks are always opened and closed within the same part, so no file ever carries only an opening or only a closing tag.
+* When combined with `--per-file`, split files are numbered as `Book.xlsx.1.md`, `Book.xlsx.2.md`, and so on. Files that are not split keep their original name, `Book.xlsx.md`.
+* Unless the code block is omitted, the same content is emitted twice (inside `<details>` and inside the code block), so only half of the threshold is available for actual content. Combining `--no-codeblock` with splitting is recommended.
 
 *   **A. Running from the EXE file (Windows)**
 
@@ -275,7 +300,10 @@ var settings = SettingsLoader.Load(
     outputToFile: false,
     omitCodeBlockTicks: true,
     sanitizeHtmlTags: true,
-    removeIndent: true
+    removeIndent: true,
+    // Size threshold per output file, in bytes (default: 4MB).
+    // Files above it are split at section boundaries.
+    maxOutputSize: 8 * 1024 * 1024
 );
 
 using var analyzer = new Analyzer(settings);
@@ -298,6 +326,8 @@ After execution, the following files are generated in the specified output folde
 * `00_ProjectTree.md`: Shows the entire project folder structure in a tree format.
 * `01_ProjectContext.md`: A Markdown file that combines the contents of all files in the project. Each file is listed with its relative path, and code blocks are displayed with syntax highlighting.
   *(Note: If the project file size is large, it will automatically be split into `01_ProjectContext_1.md`, `01_ProjectContext_2.md`, etc.)*
+* When `--per-file` is specified, per-file Markdown is written under `01_ProjectContexts/`, preserving the original directory structure.
+  *(Note: Files above the threshold are split into numbered parts such as `Book.xlsx.1.md`, `Book.xlsx.2.md`.)*
 
 ## **Project Structure**
 

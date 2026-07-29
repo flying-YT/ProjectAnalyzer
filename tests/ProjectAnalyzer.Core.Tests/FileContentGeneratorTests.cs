@@ -296,6 +296,104 @@ public class FileContentGeneratorTests : IDisposable
     }
 
     [Fact]
+    public void Generate_SplitsWordIntoParts_PerTopLevelHeading_WhenExceedingMaxOutputSize()
+    {
+        // Arrange: 見出しスタイルを使った .docx を作成する。
+        // 日本語版Wordを模し、スタイルIDは "Heading1" ではなく自動生成風の "a3" にしている。
+        // Create a .docx that uses heading styles. Mimicking Japanese Word, the style ID is an
+        // auto-generated looking "a3" rather than "Heading1".
+        var tempFile = Path.Combine(_tempDir, "HeadingDoc.docx");
+        CreateWordFileWithHeadings(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true,
+            maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: 前書き・第1章・第2章の3セクションに分かれること
+        // The preamble and the two chapters become three separate sections.
+        Assert.Equal(3, results.Count);
+        Assert.Contains("前書きの段落", results[0]);
+        Assert.Contains("### 第1章", results[1]);
+        Assert.DoesNotContain("### 第2章", results[1]);
+        Assert.Contains("### 第2章", results[2]);
+
+        // H2はMarkdownの見出しになるが、分割の境界にはならないこと
+        // A level-2 heading becomes a Markdown heading but is not a split boundary.
+        Assert.Contains("#### 第1章の節", results[1]);
+
+        // どのパートにもファイル名と相対パスが再掲され、details が閉じていること
+        foreach (var part in results)
+        {
+            Assert.Contains("## HeadingDoc.docx (", part);
+            Assert.Contains("**Relative Path:** `HeadingDoc.docx`", part);
+            Assert.Equal(1, CountOccurrences(part, "<details>"));
+            Assert.Equal(1, CountOccurrences(part, "</details>"));
+        }
+    }
+
+    [Fact]
+    public void Generate_DoesNotSplitWord_WhenNoHeadingStylesAreUsed()
+    {
+        // Arrange: 見出しスタイルを使わない大きな .docx を作成する
+        // Create a large .docx that does not use heading styles.
+        var tempFile = Path.Combine(_tempDir, "FlatDoc.docx");
+        CreateWordFileWithPlainParagraphs(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true,
+            maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: 分割の境界が無いため、しきい値を超えたまま1つにまとまること
+        // With no split boundary it stays as one oversized output.
+        Assert.Single(results);
+        Assert.DoesNotContain("**Part:**", results[0]);
+    }
+
+    [Fact]
+    public void Generate_DoesNotSplitPlainTextFiles_EvenWhenExceedingMaxOutputSize()
+    {
+        // Arrange: しきい値を大きく超えるテキストファイルを作成する。
+        // 内容に "### " で始まる行を含め、ソースコードのコメントが見出しと誤検出されないことも確かめる。
+        // Create a text file far above the threshold, including a line starting with "### " to confirm
+        // that comments in source code are not mistaken for headings.
+        var tempFile = Path.Combine(_tempDir, "Large.txt");
+        File.WriteAllText(tempFile, "### これは見出しではありません\n" + new string('a', 5000));
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true,
+            maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: プレーンテキストは分割対象外なので、1つのまま出力されること
+        Assert.Single(results);
+        Assert.DoesNotContain("**Part:**", results[0]);
+        Assert.Contains("### これは見出しではありません", results[0]);
+    }
+
+    [Fact]
     public void Generate_OmitsCodeBlock_WhenOmitCodeBlockTicksIsTrue()
     {
         // Arrange
@@ -438,6 +536,64 @@ public class FileContentGeneratorTests : IDisposable
 
         mainPart.Document.Save();
     }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0;
+        for (int index = text.IndexOf(value, StringComparison.Ordinal); index >= 0; index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// テスト用に、見出しスタイルを使った .docx ファイルを生成します。
+    /// スタイルIDは日本語版Wordを模して "Heading1" ではない自動生成風の値にしています。
+    /// </summary>
+    private static void CreateWordFileWithHeadings(string path)
+    {
+        using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var mainPart = document.AddMainDocumentPart();
+        mainPart.Document = new Document(new Body());
+        var body = mainPart.Document.Body!;
+
+        // スタイル定義側に正規名 "heading 1" / "heading 2" を持たせる
+        var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
+        stylesPart.Styles = new Styles(
+            new Style(new StyleName { Val = "heading 1" }) { Type = StyleValues.Paragraph, StyleId = "a3" },
+            new Style(new StyleName { Val = "heading 2" }) { Type = StyleValues.Paragraph, StyleId = "a4" });
+        stylesPart.Styles.Save();
+
+        body.AppendChild(CreateParagraph("前書きの段落"));
+
+        body.AppendChild(CreateStyledParagraph("第1章", "a3"));
+        body.AppendChild(CreateStyledParagraph("第1章の節", "a4"));
+        body.AppendChild(CreateParagraph(new string('a', 2000)));
+
+        body.AppendChild(CreateStyledParagraph("第2章", "a3"));
+        body.AppendChild(CreateParagraph(new string('b', 2000)));
+
+        mainPart.Document.Save();
+    }
+
+    /// <summary>
+    /// テスト用に、見出しスタイルを使わない大きな .docx ファイルを生成します。
+    /// </summary>
+    private static void CreateWordFileWithPlainParagraphs(string path)
+    {
+        using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var mainPart = document.AddMainDocumentPart();
+        mainPart.Document = new Document(new Body(
+            CreateParagraph(new string('a', 2500)),
+            CreateParagraph(new string('b', 2500))));
+
+        mainPart.Document.Save();
+    }
+
+    private static Paragraph CreateStyledParagraph(string text, string styleId) => new Paragraph(
+        new ParagraphProperties(new ParagraphStyleId { Val = styleId }),
+        new Run(new Text(text)));
 
     /// <summary>
     /// テスト用に、本文の段落から参照された埋め込み画像を含む .docx ファイルを生成します。

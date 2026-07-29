@@ -55,6 +55,53 @@ public class PowerPointFileContentGeneratorTests : IDisposable
         Assert.True(firstSlideIndex >= 0 && firstSlideIndex < secondSlideIndex, "スライドの順序が保たれていません。");
     }
 
+    [Fact]
+    public void Generate_SplitsPowerPointIntoParts_PerSlide_WhenExceedingMaxOutputSize()
+    {
+        // Arrange: それぞれ単体でしきい値を超えるスライドを2枚持つ .pptx を作成する
+        // Create a .pptx with two slides that each exceed the threshold on their own.
+        var pptxPath = Path.Combine(_tempDir, "Deck.pptx");
+        CreatePowerPointFile(pptxPath, new string('a', 2000), new string('b', 2000));
+
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string>(), outputToFile: false, omitCodeBlockTicks: true, maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: スライド単位で別のコンテキストへ分割されること
+        Assert.Equal(2, results.Count);
+        Assert.Contains("### Slide 1", results[0]);
+        Assert.DoesNotContain("### Slide 2", results[0]);
+        Assert.Contains("### Slide 2", results[1]);
+
+        // どのパートにもファイル名と相対パスが再掲されること
+        foreach (var part in results)
+        {
+            Assert.Contains("## Deck.pptx (", part);
+            Assert.Contains("**Relative Path:** `Deck.pptx`", part);
+        }
+    }
+
+    [Fact]
+    public void Generate_DoesNotSplitPowerPoint_WhenItHasOnlyOneSlide()
+    {
+        // Arrange: しきい値を大きく超えるが、スライドが1枚しかない .pptx を作成する
+        // Create a .pptx that far exceeds the threshold but has only one slide.
+        var pptxPath = Path.Combine(_tempDir, "Single.pptx");
+        CreatePowerPointFile(pptxPath, new string('a', 5000));
+
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string>(), outputToFile: false, omitCodeBlockTicks: true, maxOutputSize: 1000);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var results = generator.Generate();
+
+        // Assert: 分割の境界が無いため、しきい値を超えたまま1つにまとまること
+        Assert.Single(results);
+        Assert.DoesNotContain("**Part:**", results[0]);
+    }
+
     /// <summary>
     /// テスト用に、指定したテキストを1つずつ持つスライドからなる .pptx ファイルを生成します。
     /// </summary>

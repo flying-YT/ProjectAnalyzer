@@ -27,8 +27,10 @@ public static class SettingsLoader
     /// <param name="outputPerFile">個別にファイルを出力するかどうかのフラグ。/ A flag indicating whether to output files individually.</param>
     /// <param name="sanitizeHtmlTags">HTMLタグを置換するかどうかのフラグ。/ A flag indicating whether to sanitize HTML tags.</param>
     /// <param name="removeIndent">インデントを削除するかどうかのフラグ。/ A flag indicating whether to remove indents.</param>
+    /// <param name="enableOcr">画像のOCRを有効にするかどうかのフラグ。/ A flag indicating whether to enable OCR for images.</param>
+    /// <param name="maxOutputSize">出力Markdown 1ファイルあたりのサイズのしきい値（バイト）。/ The size threshold per output Markdown file, in bytes.</param>
     /// <returns>読み込まれた設定情報を含む `AnalyzerSettings` インスタンス。/ An `AnalyzerSettings` instance containing the loaded configuration.</returns>
-    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, bool sanitizeHtmlTags = false, bool removeIndent = false, bool enableOcr = false)   
+    public static AnalyzerSettings Load(string projectPath, string outputPath, bool outputToFile = true, bool omitCodeBlockTicks = false, bool outputPerFile = false, bool sanitizeHtmlTags = false, bool removeIndent = false, bool enableOcr = false, long maxOutputSize = AnalyzerSettings.DefaultMaxOutputSize)
     {
         string targetPath = projectPath;
         string? tempCloneDir = null;
@@ -157,6 +159,6 @@ public static class SettingsLoader
             }
         }
 
-        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir, sanitizeHtmlTags, removeIndent, enableOcr);
+        return new AnalyzerSettings(targetPath, outputPath, ignoreList, outputToFile, omitCodeBlockTicks, outputPerFile, tempCloneDir, sanitizeHtmlTags, removeIndent, enableOcr, maxOutputSize);
     }
 }
