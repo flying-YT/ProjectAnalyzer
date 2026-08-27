@@ -665,4 +665,159 @@ public class FileContentGeneratorTests : IDisposable
         }
         return row;
     }
+
+    [Fact]
+    public void Generate_ConvertsTableInsideTextBoxToMarkdownTable()
+    {
+        // Arrange: テキストボックス（図形）の中に表がある .docx を作成する
+        // Create a .docx whose table lives inside a text box (a shape).
+        var tempFile = Path.Combine(_tempDir, "TextBoxDoc.docx");
+        CreateWordFileWithTextBoxTable(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: テキストボックス内の表もMarkdownのテーブルになっていること
+        Assert.Contains("| 項目 | 説明 |\n| --- | --- |\n", content);
+        Assert.Contains("| A | あ |", content);
+
+        // 1行の文字列へ潰れていないこと（段落の InnerText として連結されていないこと）
+        Assert.DoesNotContain("項目説明", content);
+
+        // mc:Choice と mc:Fallback の両方を辿って二重出力していないこと
+        Assert.Equal(1, CountOccurrences(content, "| A | あ |"));
+
+        // テキストボックスの前後の段落が失われていないこと
+        Assert.Contains("導入の段落", content);
+        Assert.Contains("末尾の段落", content);
+    }
+
+    [Fact]
+    public void Generate_EmitsAlternateContentOnlyOnce()
+    {
+        // Arrange: 本文直下の mc:AlternateContent に同じ表が2つの形式で入った .docx を作成する
+        // Create a .docx whose body holds the same table in both branches of an mc:AlternateContent.
+        var tempFile = Path.Combine(_tempDir, "AlternateContentDoc.docx");
+        CreateWordFileWithAlternateContentTable(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: 新旧どちらか一方のブランチだけが採用され、表が1回だけ出力されること
+        Assert.Contains("| 項目 | 説明 |", content);
+        Assert.Equal(1, CountOccurrences(content, "| A | あ |"));
+
+        // 採用しなかったブランチが空のテーブルとして残っていないこと（区切り行の数で判定する）
+        Assert.Equal(1, CountOccurrences(content, "| --- | --- |"));
+    }
+
+    [Fact]
+    public void Generate_ReadsMacroEnabledWordFile()
+    {
+        // Arrange: マクロ有効形式(.docm)の Word ファイルを作成する
+        // Create a macro-enabled (.docm) Word file.
+        var tempFile = Path.Combine(_tempDir, "MacroDoc.docm");
+        CreateWordFileWithTable(tempFile);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: .docx と同じようにWordとして読み込まれ、表がMarkdownになっていること
+        Assert.Contains("## MacroDoc.docm", content);
+        Assert.Contains("| 項目 | 説明 |\n| --- | --- |\n", content);
+
+        // ZIPパッケージの生バイト列がそのまま出力されていないこと
+        Assert.DoesNotContain("word/document.xml", content);
+    }
+
+    /// <summary>
+    /// テスト用に、テキストボックス（図形）の中へ表を配置した .docx ファイルを生成します。
+    /// Wordが実際に出力する構造にならって、新形式(mc:Choice)と旧形式(mc:Fallback)の両方へ同じ表を入れています。
+    /// </summary>
+    private static void CreateWordFileWithTextBoxTable(string path)
+    {
+        string textBoxXml = $@"
+<w:p><w:r>
+  <mc:AlternateContent {McNamespace}>
+    <mc:Choice Requires=""wps"">
+      <w:drawing {WpNamespace}><wp:inline><a:graphic {ANamespace}><a:graphicData>
+        <wps:wsp {WpsNamespace}><wps:txbx><w:txbxContent>{SampleTableXml}</w:txbxContent></wps:txbx></wps:wsp>
+      </a:graphicData></a:graphic></wp:inline></w:drawing>
+    </mc:Choice>
+    <mc:Fallback>
+      <w:pict {VNamespace}><v:shape><v:textbox><w:txbxContent>{SampleTableXml}</w:txbxContent></v:textbox></v:shape></w:pict>
+    </mc:Fallback>
+  </mc:AlternateContent>
+</w:r></w:p>";
+
+        CreateWordFileFromBodyXml(path, ParagraphXml("導入の段落") + textBoxXml + ParagraphXml("末尾の段落"));
+    }
+
+    /// <summary>
+    /// テスト用に、本文直下の mc:AlternateContent へ同じ表を2つの形式で入れた .docx ファイルを生成します。
+    /// </summary>
+    private static void CreateWordFileWithAlternateContentTable(string path)
+    {
+        string alternateContentXml = $@"
+<mc:AlternateContent {McNamespace}>
+  <mc:Choice Requires=""wps"">{SampleTableXml}</mc:Choice>
+  <mc:Fallback>{SampleTableXml}</mc:Fallback>
+</mc:AlternateContent>";
+
+        CreateWordFileFromBodyXml(path, ParagraphXml("導入の段落") + alternateContentXml + ParagraphXml("末尾の段落"));
+    }
+
+    /// <summary>
+    /// 本文のXMLを直接指定して .docx を生成します。
+    /// SDKのクラスでは組み立てにくい mc:AlternateContent やテキストボックスの構造を再現するために使用します。
+    /// </summary>
+    private static void CreateWordFileFromBodyXml(string path, string bodyXml)
+    {
+        using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var mainPart = document.AddMainDocumentPart();
+        mainPart.Document = new Document(new Body());
+        mainPart.Document.Body!.InnerXml = bodyXml;
+        mainPart.Document.Save();
+    }
+
+    private const string McNamespace = @"xmlns:mc=""http://schemas.openxmlformats.org/markup-compatibility/2006""";
+    private const string WpNamespace = @"xmlns:wp=""http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""";
+    private const string ANamespace = @"xmlns:a=""http://schemas.openxmlformats.org/drawingml/2006/main""";
+    private const string WpsNamespace = @"xmlns:wps=""http://schemas.microsoft.com/office/word/2010/wordprocessingShape""";
+    private const string VNamespace = @"xmlns:v=""urn:schemas-microsoft-com:vml""";
+
+    /// <summary>
+    /// テストで使い回す2行2列の表のXMLです。
+    /// </summary>
+    private const string SampleTableXml =
+        "<w:tbl>" +
+        "<w:tr><w:tc><w:p><w:r><w:t>項目</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>説明</w:t></w:r></w:p></w:tc></w:tr>" +
+        "<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>あ</w:t></w:r></w:p></w:tc></w:tr>" +
+        "</w:tbl>";
+
+    private static string ParagraphXml(string text) => $"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>";
 }

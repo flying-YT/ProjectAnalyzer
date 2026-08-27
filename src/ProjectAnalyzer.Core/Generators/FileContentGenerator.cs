@@ -26,6 +26,21 @@ public class FileContentGenerator
     private readonly AnalyzerSettings _settings;
 
     /// <summary>
+    /// 内容を抽出せずスキップしたバイナリファイルのパス一覧です。ファイルの並び順は分析対象と同じです。
+    /// The paths of the binary files skipped instead of having their content extracted, in the same
+    /// order as the analyzed files.
+    /// </summary>
+    private readonly List<string> _skippedBinaryFiles = new List<string>();
+
+    /// <summary>
+    /// 直近の生成処理でスキップしたバイナリファイルのパス一覧を返します。
+    /// 呼び出し側は、これらのファイルを原本のままコピーするなどの後処理に利用できます。
+    /// Returns the paths of the binary files skipped during the most recent generation.
+    /// The caller can use them for post-processing, such as copying the originals as-is.
+    /// </summary>
+    public IReadOnlyList<string> SkippedBinaryFiles => _skippedBinaryFiles;
+
+    /// <summary>
     /// 静的コンストラクタ。OCR(Tesseract)の内部OpenMP並列を1スレッドに制限します。
     /// Tesseractは1画像あたり全コアを使って並列処理するため、本ツールのファイル単位並列と
     /// 二重になるとCPUのオーバーサブスクリプション（スレッド過多）が発生し、かえって低速化します。
@@ -180,7 +195,7 @@ public class FileContentGenerator
 
             // Excelファイルの場合の特別処理
             // Special handling for Excel files.
-            if (extension == ".xlsx" || extension == ".xls" || extension == ".xlsm")
+            if (IsExcelExtension(extension))
             {
                 // 図形テキストと画像OCRはシート単位で取得し、各シートのセクション内へ差し込む。
                 // 末尾へまとめると、セクション単位で分割したときにOCR結果が最後のチャンクへ偏るため。
@@ -199,15 +214,17 @@ public class FileContentGenerator
                     sections.Add($"[Excel Extract Error: {shapesError}]\n");
                 }
             }
-            // Wordファイル(.docx)の場合の特別処理
-            // Special handling for Word files (.docx).
-            else if (extension == ".docx")
+            // Wordファイル(.docx, .docm)の場合の特別処理
+            // マクロ有効形式(.docm)も中身は同じOpen XMLのため、同じ経路で読み込む。
+            // Special handling for Word files (.docx, .docm).
+            // The macro-enabled format (.docm) is the same Open XML package, so it takes the same path.
+            else if (IsWordExtension(extension))
             {
                 sections = ReadWordFile(filePath);
             }
             // PowerPointファイル(.pptx)の場合の特別処理 (追加)
             // Special handling for PowerPoint files (.pptx).
-            else if (extension == ".pptx")
+            else if (IsPowerPointExtension(extension))
             {
                 sections = ReadPowerPointFile(filePath);
             }
@@ -238,6 +255,42 @@ public class FileContentGenerator
             Console.WriteLine($"   [Warning] Could not process file '{Path.GetFileName(filePath)}': {ex.Message}");
             return new List<string>();
         }
+    }
+
+    /// <summary>
+    /// Excelとして読み込む拡張子かどうかを判定します。
+    /// Determines whether the extension is read as an Excel file.
+    /// </summary>
+    private static bool IsExcelExtension(string extension)
+        => extension is ".xlsx" or ".xls" or ".xlsm";
+
+    /// <summary>
+    /// Wordとして読み込む拡張子かどうかを判定します。
+    /// Determines whether the extension is read as a Word file.
+    /// </summary>
+    private static bool IsWordExtension(string extension)
+        => extension is ".docx" or ".docm";
+
+    /// <summary>
+    /// PowerPointとして読み込む拡張子かどうかを判定します。
+    /// Determines whether the extension is read as a PowerPoint file.
+    /// </summary>
+    private static bool IsPowerPointExtension(string extension)
+        => extension is ".pptx";
+
+    /// <summary>
+    /// 専用の抽出処理を持つファイルかどうかを判定します。
+    /// これらはZIPやOLE形式のためバイナリと判定されてしまうので、バイナリ判定より先に振り分けます。
+    /// Determines whether a file has a dedicated extraction path.
+    /// Such files are ZIP or OLE containers and would be flagged as binary, so they are routed
+    /// before the binary check runs.
+    /// </summary>
+    /// <param name="filePath">判定対象のファイルパス / The path of the file to inspect.</param>
+    /// <returns>専用の抽出処理を持つ場合は true / true when a dedicated extractor exists.</returns>
+    private static bool HasDedicatedExtractor(string filePath)
+    {
+        string extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return IsExcelExtension(extension) || IsWordExtension(extension) || IsPowerPointExtension(extension);
     }
 
     /// <summary>
@@ -923,6 +976,16 @@ public class FileContentGenerator
             {
                 case DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph:
                     AppendWordParagraph(paragraph, sectionBuilder, headingLevels);
+
+                    // テキストボックスや図形の中身は段落の内側に入っているため、ブロック要素として辿り直す。
+                    // ここで再帰しないと、中の表が段落テキストの一部として1行に潰れてしまう。
+                    // Text box and shape content lives inside the paragraph, so walk it as block elements.
+                    // Without this recursion a table inside a text box collapses into one line of text.
+                    foreach (var textBox in GetWordTextBoxContents(paragraph))
+                    {
+                        AppendWordBlocks(textBox, sectionBuilder, imageContext, headingLevels);
+                    }
+
                     // 画像は段落内に配置されるため、その段落の直後へOCR結果を出力する
                     // Images live inside paragraphs, so emit their OCR right after that paragraph.
                     sectionBuilder.Current.Append(ExtractWordImagesOcr(paragraph, imageContext));
@@ -933,6 +996,18 @@ public class FileContentGenerator
                     // 表の途中に差し込むとMarkdownのテーブルが崩れるため、表の直後へまとめて出力する
                     // Inserting inside the table would break the Markdown table, so emit it right after.
                     sectionBuilder.Current.Append(ExtractWordImagesOcr(table, imageContext));
+                    break;
+
+                case AlternateContent alternateContent:
+                    // 同じ内容が mc:Choice(新形式) と mc:Fallback(旧形式) の両方に入っているため、
+                    // 片方だけを採用する。両方辿ると同じ表やテキストが二重に出力される。
+                    // The same content is stored in both mc:Choice (modern) and mc:Fallback (legacy),
+                    // so only one branch is taken. Walking both would emit tables and text twice.
+                    var chosenBranch = ChooseAlternateContentBranch(alternateContent);
+                    if (chosenBranch != null)
+                    {
+                        AppendWordBlocks(chosenBranch, sectionBuilder, imageContext, headingLevels);
+                    }
                     break;
 
                 default:
@@ -960,7 +1035,7 @@ public class FileContentGenerator
     /// <param name="headingLevels">スタイルIDをキーとした見出しレベルの対応表 / The heading levels keyed by style ID.</param>
     private static void AppendWordParagraph(DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph, WordSectionBuilder sectionBuilder, Dictionary<string, int> headingLevels)
     {
-        string text = paragraph.InnerText;
+        string text = GetWordParagraphText(paragraph);
 
         // 文字の無い段落は見出しとして扱わない（空の見出しでセクションを切らないため）
         // A paragraph without text is not treated as a heading, so empty headings do not split sections.
@@ -980,6 +1055,129 @@ public class FileContentGenerator
         // "##" is used for the file name heading, so a Word H1 starts at "###".
         string hashes = new string('#', Math.Min(headingLevel.Value + 2, 6));
         sectionBuilder.Current.AppendLine($"{hashes} {text}");
+    }
+
+    /// <summary>
+    /// 段落自身のテキストを取得します。InnerText と違い、テキストボックスの中身は含めず、
+    /// mc:AlternateContent は採用するブランチの分だけを拾います。
+    /// テキストボックスの中身は呼び出し側がブロック要素として別途出力するため、ここで含めると
+    /// 表が1行に潰れたうえ、新旧2つのブランチぶん二重に出力されてしまいます。
+    /// Gets the text of the paragraph itself. Unlike InnerText it excludes text box content and reads
+    /// only the chosen branch of an mc:AlternateContent. The caller emits text box content separately
+    /// as block elements; including it here would flatten tables into one line and emit everything
+    /// twice, once for each of the modern and legacy branches.
+    /// </summary>
+    /// <param name="paragraph">対象の段落 / The paragraph to read.</param>
+    /// <returns>段落のテキスト / The text of the paragraph.</returns>
+    private static string GetWordParagraphText(DocumentFormat.OpenXml.Wordprocessing.Paragraph paragraph)
+    {
+        var sb = new StringBuilder();
+        AppendWordTextExcludingTextBoxes(paragraph, sb);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 要素配下のテキストを、テキストボックスの中身を除いて連結します。
+    /// mc:AlternateContent に出会った場合は、採用するブランチだけを辿ります。
+    /// Concatenates the text under an element, excluding text box content.
+    /// When an mc:AlternateContent is encountered, only the chosen branch is walked.
+    /// </summary>
+    /// <param name="element">走査対象の要素 / The element to walk.</param>
+    /// <param name="sb">出力先のStringBuilder / The destination StringBuilder.</param>
+    private static void AppendWordTextExcludingTextBoxes(OpenXmlElement element, StringBuilder sb)
+    {
+        foreach (var child in element.Elements())
+        {
+            switch (child)
+            {
+                // テキストボックスの中身はブロック要素として別途出力するため、ここでは拾わない
+                // Text box content is emitted separately as block elements, so it is skipped here.
+                case DocumentFormat.OpenXml.Wordprocessing.TextBoxContent:
+                    break;
+
+                case AlternateContent alternateContent:
+                    var chosenBranch = ChooseAlternateContentBranch(alternateContent);
+                    if (chosenBranch != null) AppendWordTextExcludingTextBoxes(chosenBranch, sb);
+                    break;
+
+                default:
+                    // 子を持たない要素(w:t など)が実際のテキストを保持している
+                    // Elements without children (such as w:t) are the ones holding the actual text.
+                    if (child.HasChildren) AppendWordTextExcludingTextBoxes(child, sb);
+                    else sb.Append(child.InnerText);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 要素配下にあるテキストボックスの中身を、出現順に列挙します。
+    /// mc:AlternateContent は採用するブランチだけを辿るため、同じテキストボックスが
+    /// 新旧2つの形式で二重に返ることはありません。
+    /// Enumerates the text box content under an element, in document order.
+    /// Only the chosen branch of an mc:AlternateContent is walked, so the same text box is never
+    /// returned twice through its modern and legacy representations.
+    /// </summary>
+    /// <param name="element">走査対象の要素 / The element to walk.</param>
+    /// <returns>テキストボックスの中身の列挙 / The enumeration of text box content elements.</returns>
+    private static IEnumerable<DocumentFormat.OpenXml.Wordprocessing.TextBoxContent> GetWordTextBoxContents(OpenXmlElement element)
+    {
+        foreach (var child in element.Elements())
+        {
+            switch (child)
+            {
+                case DocumentFormat.OpenXml.Wordprocessing.TextBoxContent textBox:
+                    // 入れ子のテキストボックスは、この中身をブロックとして辿るときに拾われる
+                    // A nested text box is picked up when this content is walked as block elements.
+                    yield return textBox;
+                    break;
+
+                case AlternateContent alternateContent:
+                    var chosenBranch = ChooseAlternateContentBranch(alternateContent);
+                    if (chosenBranch == null) break;
+                    foreach (var textBox in GetWordTextBoxContents(chosenBranch)) yield return textBox;
+                    break;
+
+                default:
+                    foreach (var textBox in GetWordTextBoxContents(child)) yield return textBox;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// mc:AlternateContent のうち、内容として採用するブランチを返します。
+    /// 新しい形式(mc:Choice)を優先し、無ければ旧形式(mc:Fallback)を使います。
+    /// Requires 属性の対応可否までは判定できないため、複数ある場合は先頭の mc:Choice を採用します。
+    /// Returns the branch of an mc:AlternateContent whose content should be used.
+    /// The modern form (mc:Choice) wins, falling back to the legacy form (mc:Fallback).
+    /// The Requires attribute cannot be evaluated here, so the first mc:Choice is taken.
+    /// </summary>
+    /// <param name="alternateContent">対象の mc:AlternateContent / The mc:AlternateContent to inspect.</param>
+    /// <returns>採用するブランチ、または null / The branch to use, or null.</returns>
+    private static OpenXmlElement? ChooseAlternateContentBranch(AlternateContent alternateContent)
+        => (OpenXmlElement?)alternateContent.GetFirstChild<AlternateContentChoice>()
+           ?? alternateContent.GetFirstChild<AlternateContentFallback>();
+
+    /// <summary>
+    /// mc:AlternateContent の採用しないブランチ（通常は mc:Fallback）に属する要素かどうかを判定します。
+    /// 採用しないブランチの内容を出力に含めると、同じ内容が二重に出力されてしまいます。
+    /// Determines whether an element belongs to the discarded branch of an mc:AlternateContent
+    /// (normally mc:Fallback). Including a discarded branch would emit the same content twice.
+    /// </summary>
+    /// <param name="element">判定対象の要素 / The element to inspect.</param>
+    /// <returns>採用しないブランチに属する場合は true / true when the element is in a discarded branch.</returns>
+    private static bool IsInDiscardedAlternateContentBranch(OpenXmlElement element)
+    {
+        for (var ancestor = element.Parent; ancestor != null; ancestor = ancestor.Parent)
+        {
+            if (ancestor.Parent is not AlternateContent alternateContent) continue;
+            if (ancestor is not AlternateContentChoice && ancestor is not AlternateContentFallback) continue;
+
+            if (!ReferenceEquals(ChooseAlternateContentBranch(alternateContent), ancestor)) return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1164,8 +1362,15 @@ public class FileContentGenerator
         // When HTML sanitization is enabled, <br> would also be replaced, so a space is used instead.
         string separator = _settings.SanitizeHtmlTags ? " " : "<br>";
 
+        // セル内のテキストボックスの中身も段落として列挙されるため、GetWordParagraphText で
+        // 段落自身のテキストだけを取り出す（そうしないと入れ子の段落ぶん内容が重複する）。
+        // 採用しない mc:AlternateContent のブランチは、同じ内容の二重出力になるため除外する。
+        // Text box content inside the cell is enumerated as paragraphs too, so GetWordParagraphText
+        // takes only each paragraph's own text (otherwise nested paragraphs are counted twice).
+        // The discarded mc:AlternateContent branch is skipped, as it repeats the same content.
         var paragraphTexts = cell.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>()
-            .Select(p => p.InnerText.Replace("\r", " ").Replace("\n", " ").Trim())
+            .Where(p => !IsInDiscardedAlternateContentBranch(p))
+            .Select(p => GetWordParagraphText(p).Replace("\r", " ").Replace("\n", " ").Trim())
             .Where(t => !string.IsNullOrEmpty(t));
 
         // セル内の "|" は列の区切りと解釈されるためエスケープする
@@ -1310,15 +1515,106 @@ public class FileContentGenerator
             MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
         };
 
+        // PDFや画像などのバイナリはテキストとして読むと文字化けするため、内容を抽出せず
+        // 存在だけを示すプレースホルダに置き換える。判定結果は配列へ入れ、あとで元の順序どおりに記録する。
+        // Binaries such as PDFs and images turn into mojibake when read as text, so their content is
+        // replaced with a placeholder that only records their presence. The decisions go into an array
+        // and are collected afterwards in the original file order.
+        var isBinary = new bool[allFiles.Count];
+
         // GenerateMarkdownPartsForFile は共有可変状態を持たない（_settings は読み取り専用、一時ファイルは一意名、
         // 例外は内部で捕捉）ため、ファイル単位の並列実行はスレッドセーフである。
         // GenerateMarkdownPartsForFile has no shared mutable state (read-only _settings, unique temp file
         // names, exceptions caught internally), so per-file parallel execution is thread-safe.
         Parallel.For(0, allFiles.Count, parallelOptions, i =>
         {
+            // Office形式は中身がZIPやOLEでバイナリと判定されてしまうため、専用の抽出処理を先に通す
+            // Office formats are ZIP or OLE containers and would be flagged as binary, so the files
+            // with a dedicated extractor bypass the check.
+            if (!HasDedicatedExtractor(allFiles[i]) && BinaryFileDetector.IsBinaryFile(allFiles[i]))
+            {
+                isBinary[i] = true;
+                results[i] = new List<string> { RenderSkippedBinaryFile(allFiles[i]) };
+                return;
+            }
+
             results[i] = GenerateMarkdownPartsForFile(allFiles[i]);
         });
 
+        _skippedBinaryFiles.Clear();
+        for (int i = 0; i < allFiles.Count; i++)
+        {
+            if (isBinary[i]) _skippedBinaryFiles.Add(allFiles[i]);
+        }
+
         return results;
+    }
+
+    /// <summary>
+    /// 内容を抽出しなかったバイナリファイルを、存在を示すプレースホルダとして描画します。
+    /// ツリーには載るファイルの内容がなぜ無いのかをAIへ伝え、内容を推測させないための出力です。
+    /// Renders a binary file whose content was not extracted as a placeholder recording its presence.
+    /// It tells the AI why a file listed in the tree has no content, so that it does not invent one.
+    /// </summary>
+    /// <param name="filePath">対象ファイルのパス / The path of the target file.</param>
+    /// <returns>描画されたMarkdown / The rendered Markdown.</returns>
+    private string RenderSkippedBinaryFile(string filePath)
+    {
+        string relativePath = Path.GetRelativePath(_settings.ProjectPath, filePath);
+
+        var note = new StringBuilder();
+        note.Append($"[Skipped: unsupported binary file ({Path.GetExtension(filePath)}, {FormatFileSize(filePath)}). Its content was not extracted.");
+
+        // ファイル出力時のみ原本をコピーするため、コピー先の案内も出力時だけ添える
+        // The original is copied only when writing to files, so mention the copy only in that case.
+        if (_settings.OutputToFile)
+        {
+            string copiedPath = $"{AnalyzerSettings.SkippedFilesDirectoryName}/{relativePath.Replace('\\', '/')}";
+            note.Append($" The original file is copied to `{copiedPath}`.");
+        }
+
+        note.Append(']');
+
+        var sb = new StringBuilder();
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine($"## {Path.GetFileName(filePath)}");
+        sb.AppendLine();
+        sb.AppendLine($"**Relative Path:** `{relativePath}`");
+        sb.AppendLine();
+        sb.AppendLine($"**File Content:** {note}");
+        sb.AppendLine();
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// ファイルサイズを人が読みやすい単位の文字列にします。取得に失敗した場合は "unknown size" を返します。
+    /// Formats a file's size into a human-readable string, or "unknown size" when it cannot be read.
+    /// </summary>
+    /// <param name="filePath">対象ファイルのパス / The path of the target file.</param>
+    /// <returns>整形されたサイズ / The formatted size.</returns>
+    private static string FormatFileSize(string filePath)
+    {
+        try
+        {
+            double size = new FileInfo(filePath).Length;
+            string[] units = { "B", "KB", "MB", "GB" };
+
+            int unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.Length - 1)
+            {
+                size /= 1024;
+                unitIndex++;
+            }
+
+            return unitIndex == 0
+                ? $"{size:0} {units[unitIndex]}"
+                : $"{size:0.#} {units[unitIndex]}";
+        }
+        catch (IOException)
+        {
+            return "unknown size";
+        }
     }
 }

@@ -24,4 +24,11 @@ public class AnalyzerResult
     /// A list of contexts (relative path and content) for each individual file.
     /// </summary>
     public List<(string RelativePath, string Content)> IndividualFileContexts { get; set; } = new();
+
+    /// <summary>
+    /// 内容を抽出せずスキップした、非対応形式（PDFや画像などのバイナリ）のファイルの相対パスのリスト
+    /// A list of relative paths of the unsupported files (binaries such as PDFs and images) that were
+    /// skipped instead of having their content extracted.
+    /// </summary>
+    public List<string> SkippedFiles { get; set; } = new();
 }
