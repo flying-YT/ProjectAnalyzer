@@ -820,4 +820,138 @@ public class FileContentGeneratorTests : IDisposable
         "</w:tbl>";
 
     private static string ParagraphXml(string text) => $"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>";
+
+    [Fact]
+    public void Generate_ExtractsNestedTableAsSeparateTable()
+    {
+        // Arrange: 外側の表の1セルに入れ子の表が入った .docx を作成する
+        // Create a .docx whose outer table holds a nested table in one of its cells.
+        var tempFile = Path.Combine(_tempDir, "NestedTableDoc.docx");
+        CreateWordFileFromBodyXml(tempFile, TableXml(
+            RowXml(CellXml(ParagraphXml("機能ID")), CellXml(ParagraphXml("入力項目"))),
+            RowXml(
+                CellXml(ParagraphXml("F-001")),
+                CellXml(ParagraphXml("※任意項目を含む") + TableXml(
+                    RowXml(CellXml(ParagraphXml("項目名")), CellXml(ParagraphXml("型"))),
+                    RowXml(CellXml(ParagraphXml("受注番号")), CellXml(ParagraphXml("string"))))))));
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: 外側の表は2列の表のまま保たれ、セルには参照だけが残ること
+        Assert.Contains("| 機能ID | 入力項目 |\n| --- | --- |\n", content);
+        Assert.Contains("| F-001 | ※任意項目を含む<br>[Nested Table 1] |", content);
+
+        // 入れ子の表が、参照の見出し付きで独立したテーブルとして出力されること
+        Assert.Contains("**[Nested Table 1]** (row 2, column 2)", content);
+        Assert.Contains("| 項目名 | 型 |\n| --- | --- |\n| 受注番号 | string |", content);
+
+        // セルの中身が読み順に平坦化されていないこと（列と行の対応が保たれていること）
+        Assert.DoesNotContain("項目名<br>型", content);
+
+        // 入れ子の表は外側の表より後に出力されること
+        int outerIndex = content.IndexOf("| 機能ID | 入力項目 |", StringComparison.Ordinal);
+        int nestedIndex = content.IndexOf("**[Nested Table 1]**", StringComparison.Ordinal);
+        Assert.True(outerIndex >= 0 && outerIndex < nestedIndex, "入れ子の表が外側の表より前に出力されています。");
+    }
+
+    [Fact]
+    public void Generate_NumbersNestedTablesSequentially_AcrossNestingLevels()
+    {
+        // Arrange: 1つの表に入れ子が2つあり、さらにその片方にも入れ子がある .docx を作成する
+        // Create a .docx with two nested tables, one of which nests a table of its own.
+        var tempFile = Path.Combine(_tempDir, "DeepNestedDoc.docx");
+        CreateWordFileFromBodyXml(tempFile, TableXml(RowXml(
+            CellXml(ParagraphXml("cell1") + TableXml(RowXml(
+                CellXml(ParagraphXml("L2-a")),
+                CellXml(ParagraphXml("L2-b") + TableXml(RowXml(CellXml(ParagraphXml("L3-x")), CellXml(ParagraphXml("L3-y")))))))),
+            CellXml(ParagraphXml("cell2") + TableXml(RowXml(CellXml(ParagraphXml("other-1")), CellXml(ParagraphXml("other-2"))))))));
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: 参照が採番順どおりに並び、深い入れ子も取りこぼされないこと
+        int first = content.IndexOf("**[Nested Table 1]**", StringComparison.Ordinal);
+        int second = content.IndexOf("**[Nested Table 2]**", StringComparison.Ordinal);
+        int third = content.IndexOf("**[Nested Table 3]**", StringComparison.Ordinal);
+        Assert.True(first >= 0 && first < second && second < third, "入れ子の表が採番順に出力されていません。");
+
+        // 3階層目の表が、2階層目のセルから参照されていること
+        Assert.Contains("| L2-a | L2-b<br>[Nested Table 3] |", content);
+        Assert.Contains("| L3-x | L3-y |", content);
+
+        // 同じ番号が重複して採番されていないこと
+        Assert.Equal(1, CountOccurrences(content, "**[Nested Table 1]**"));
+        Assert.Equal(1, CountOccurrences(content, "**[Nested Table 2]**"));
+        Assert.Equal(1, CountOccurrences(content, "**[Nested Table 3]**"));
+    }
+
+    [Fact]
+    public void Generate_KeepsTextBoxContentInCell_WhenSeparatingNestedTables()
+    {
+        // Arrange: セル内のテキストボックスに、文章と表の両方が入った .docx を作成する
+        // Create a .docx whose cell holds a text box containing both a paragraph and a table.
+        var tempFile = Path.Combine(_tempDir, "TextBoxInCellDoc.docx");
+
+        string textBoxContent = ParagraphXml("枠内テキスト")
+            + TableXml(RowXml(CellXml(ParagraphXml("TB-1")), CellXml(ParagraphXml("TB-2"))));
+
+        string textBoxXml = $@"
+<w:p><w:r>
+  <mc:AlternateContent {McNamespace}>
+    <mc:Choice Requires=""wps"">
+      <w:drawing {WpNamespace}><wp:inline><a:graphic {ANamespace}><a:graphicData>
+        <wps:wsp {WpsNamespace}><wps:txbx><w:txbxContent>{textBoxContent}</w:txbxContent></wps:txbx></wps:wsp>
+      </a:graphicData></a:graphic></wp:inline></w:drawing>
+    </mc:Choice>
+    <mc:Fallback>
+      <w:pict {VNamespace}><v:shape><v:textbox><w:txbxContent>{textBoxContent}</w:txbxContent></v:textbox></v:shape></w:pict>
+    </mc:Fallback>
+  </mc:AlternateContent>
+</w:r></w:p>";
+
+        CreateWordFileFromBodyXml(tempFile, TableXml(RowXml(
+            CellXml(ParagraphXml("左")),
+            CellXml(ParagraphXml("右") + textBoxXml))));
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: テキストボックス内の文章はセルの内容として残ること（入れ子の表と一緒に消さない）
+        Assert.Contains("| 左 | 右<br>枠内テキスト<br>[Nested Table 1] |", content);
+
+        // テキストボックス内の表も、独立したテーブルとして1回だけ出力されること
+        Assert.Contains("| TB-1 | TB-2 |", content);
+        Assert.Equal(1, CountOccurrences(content, "| TB-1 | TB-2 |"));
+    }
+
+    private static string TableXml(params string[] rows) => "<w:tbl>" + string.Concat(rows) + "</w:tbl>";
+
+    private static string RowXml(params string[] cells) => "<w:tr>" + string.Concat(cells) + "</w:tr>";
+
+    private static string CellXml(string inner) => $"<w:tc>{inner}</w:tc>";
 }

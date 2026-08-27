@@ -799,12 +799,18 @@ public class FileContentGenerator
                     ? BuildWordHeadingLevelsByStyleId(mainPart)
                     : new Dictionary<string, int>(StringComparer.Ordinal);
 
+                // 入れ子の表の通し番号は文書ごとに振る。ファイル単位で並列実行されるため、
+                // インスタンスの状態にはせず、この文書の走査だけで共有する。
+                // Nested tables are numbered per document. Files are processed in parallel, so the
+                // counter is not instance state; it is shared only within this document's walk.
+                var nestedTableNumbering = new WordNestedTableNumbering();
+
                 var body = mainPart?.Document?.Body;
                 if (body != null)
                 {
                     // 本文のブロック要素(段落・表)を出現順に抽出する
                     // Extract the block elements (paragraphs and tables) of the body in document order.
-                    AppendWordBlocks(body, sectionBuilder, imageContext, headingLevels);
+                    AppendWordBlocks(body, sectionBuilder, imageContext, headingLevels, nestedTableNumbering);
                 }
 
                 // 本文から参照されていない画像（差し込み位置を特定できないもの）は、
@@ -968,7 +974,8 @@ public class FileContentGenerator
     /// <param name="sectionBuilder">セクションの組み立て先 / The section builder to write into.</param>
     /// <param name="imageContext">画像OCRの処理状態。OCRが無効な場合は null / The image OCR state, or null when OCR is disabled.</param>
     /// <param name="headingLevels">スタイルIDをキーとした見出しレベルの対応表 / The heading levels keyed by style ID.</param>
-    private void AppendWordBlocks(OpenXmlElement container, WordSectionBuilder sectionBuilder, WordImageContext? imageContext, Dictionary<string, int> headingLevels)
+    /// <param name="nestedTableNumbering">入れ子の表へ通し番号を振るカウンタ / The counter numbering nested tables.</param>
+    private void AppendWordBlocks(OpenXmlElement container, WordSectionBuilder sectionBuilder, WordImageContext? imageContext, Dictionary<string, int> headingLevels, WordNestedTableNumbering nestedTableNumbering)
     {
         foreach (var element in container.Elements())
         {
@@ -983,7 +990,7 @@ public class FileContentGenerator
                     // Without this recursion a table inside a text box collapses into one line of text.
                     foreach (var textBox in GetWordTextBoxContents(paragraph))
                     {
-                        AppendWordBlocks(textBox, sectionBuilder, imageContext, headingLevels);
+                        AppendWordBlocks(textBox, sectionBuilder, imageContext, headingLevels, nestedTableNumbering);
                     }
 
                     // 画像は段落内に配置されるため、その段落の直後へOCR結果を出力する
@@ -992,7 +999,7 @@ public class FileContentGenerator
                     break;
 
                 case DocumentFormat.OpenXml.Wordprocessing.Table table:
-                    AppendWordTable(table, sectionBuilder.Current);
+                    AppendWordTable(table, sectionBuilder.Current, nestedTableNumbering);
                     // 表の途中に差し込むとMarkdownのテーブルが崩れるため、表の直後へまとめて出力する
                     // Inserting inside the table would break the Markdown table, so emit it right after.
                     sectionBuilder.Current.Append(ExtractWordImagesOcr(table, imageContext));
@@ -1006,7 +1013,7 @@ public class FileContentGenerator
                     var chosenBranch = ChooseAlternateContentBranch(alternateContent);
                     if (chosenBranch != null)
                     {
-                        AppendWordBlocks(chosenBranch, sectionBuilder, imageContext, headingLevels);
+                        AppendWordBlocks(chosenBranch, sectionBuilder, imageContext, headingLevels, nestedTableNumbering);
                     }
                     break;
 
@@ -1017,7 +1024,7 @@ public class FileContentGenerator
                     // Table contents are handled in the case above, so nothing is emitted twice.
                     if (element.HasChildren)
                     {
-                        AppendWordBlocks(element, sectionBuilder, imageContext, headingLevels);
+                        AppendWordBlocks(element, sectionBuilder, imageContext, headingLevels, nestedTableNumbering);
                     }
                     break;
             }
@@ -1296,17 +1303,49 @@ public class FileContentGenerator
     /// </summary>
     /// <param name="table">変換対象の表 / The table to convert.</param>
     /// <param name="sb">出力先のStringBuilder / The destination StringBuilder.</param>
-    private void AppendWordTable(DocumentFormat.OpenXml.Wordprocessing.Table table, StringBuilder sb)
+    /// <param name="nestedTableNumbering">入れ子の表へ通し番号を振るカウンタ / The counter numbering nested tables.</param>
+    /// <param name="pendingNestedTables">出力待ちの入れ子の表。最上位の呼び出しでは null / The nested tables awaiting output, or null at the top-level call.</param>
+    private void AppendWordTable(
+        DocumentFormat.OpenXml.Wordprocessing.Table table,
+        StringBuilder sb,
+        WordNestedTableNumbering nestedTableNumbering,
+        List<(int Number, int RowNumber, int ColumnNumber, DocumentFormat.OpenXml.Wordprocessing.Table Table)>? pendingNestedTables = null)
     {
+        // 最上位の表の呼び出しが待ち行列を所有し、最後にまとめて出力する。
+        // 入れ子の表からの再帰では呼び出し元の行列へ積むため、番号どおりの順序で出力される。
+        // The top-level call owns the queue and flushes it at the end. Recursive calls from a nested
+        // table push onto the caller's queue, so everything is emitted in numbering order.
+        bool ownsPendingNestedTables = pendingNestedTables == null;
+        pendingNestedTables ??= new List<(int, int, int, DocumentFormat.OpenXml.Wordprocessing.Table)>();
+
         var rows = new List<List<string>>();
 
         foreach (var row in table.Elements<DocumentFormat.OpenXml.Wordprocessing.TableRow>())
         {
             var cells = new List<string>();
 
+            // 参照の見出しに使う行番号。空の行は出力されないため、出力される表の行番号と一致する。
+            // The row number used in the reference caption. Empty rows are not emitted, so this
+            // matches the row number of the rendered table.
+            int rowNumber = rows.Count + 1;
+
             foreach (var cell in row.Elements<DocumentFormat.OpenXml.Wordprocessing.TableCell>())
             {
-                cells.Add(GetWordCellText(cell));
+                int columnNumber = cells.Count + 1;
+
+                // Markdownのテーブルは入れ子にできないため、セルには参照だけを残し、
+                // 表そのものは外側の表の直後へ独立したテーブルとして出力する。
+                // Markdown tables cannot nest, so the cell keeps only a reference and the table
+                // itself is emitted as a standalone table right after the outer one.
+                var references = new List<string>();
+                foreach (var nestedTable in GetNestedTablesInCell(cell))
+                {
+                    int number = nestedTableNumbering.Next();
+                    references.Add(FormatNestedTableReference(number));
+                    pendingNestedTables.Add((number, rowNumber, columnNumber, nestedTable));
+                }
+
+                cells.Add(GetWordCellText(cell, references));
 
                 // 横結合(gridSpan)されたセルは1つのセルとして現れるため、結合された列数ぶんの
                 // 空セルを補い、他の行と列数が揃うようにする。
@@ -1346,6 +1385,82 @@ public class FileContentGenerator
             sb.AppendLine($"| {string.Join(" | ", row)} |");
         }
         sb.AppendLine();
+
+        // 入れ子の表は、所有者である最上位の表の直後へまとめて出力する
+        // Nested tables are flushed right after the top-level table that owns the queue.
+        if (!ownsPendingNestedTables) return;
+
+        // 出力中にさらに深い入れ子が積まれて行列が伸びるため、添字で走査する
+        // The queue grows while it is being flushed (tables nested deeper), so it is walked by index.
+        for (int i = 0; i < pendingNestedTables.Count; i++)
+        {
+            var pending = pendingNestedTables[i];
+
+            sb.AppendLine($"**{FormatNestedTableReference(pending.Number)}** (row {pending.RowNumber}, column {pending.ColumnNumber})");
+            AppendWordTable(pending.Table, sb, nestedTableNumbering, pendingNestedTables);
+        }
+    }
+
+    /// <summary>
+    /// 入れ子の表を指す参照の表記を返します。セル内の参照と、表本体の見出しの両方で使います。
+    /// Returns the reference label for a nested table, used both inside the cell and as the caption
+    /// of the table itself.
+    /// </summary>
+    /// <param name="number">入れ子の表の通し番号 / The sequential number of the nested table.</param>
+    /// <returns>参照の表記 / The reference label.</returns>
+    private static string FormatNestedTableReference(int number) => $"[Nested Table {number}]";
+
+    /// <summary>
+    /// セルの中に直接置かれた入れ子の表を、出現順に列挙します。
+    /// さらに深い入れ子は、その親となる表を出力するときに拾われるため、ここでは返しません。
+    /// テキストボックスの中に置かれた表も対象に含めます（セルのテキストからは除外されるため）。
+    /// Enumerates the tables nested directly inside a cell, in document order.
+    /// Tables nested deeper are picked up when their parent table is emitted, so they are not
+    /// returned here. Tables placed inside a text box are included, since they are excluded from
+    /// the cell's own text.
+    /// </summary>
+    /// <param name="cell">対象のセル / The target cell.</param>
+    /// <returns>入れ子の表の列挙 / The enumeration of nested tables.</returns>
+    private static IEnumerable<DocumentFormat.OpenXml.Wordprocessing.Table> GetNestedTablesInCell(DocumentFormat.OpenXml.Wordprocessing.TableCell cell)
+        => cell.Descendants<DocumentFormat.OpenXml.Wordprocessing.Table>()
+            .Where(t => !IsInDiscardedAlternateContentBranch(t))
+            .Where(t => !IsInsideNestedTable(t, cell));
+
+    /// <summary>
+    /// 要素がセル内の入れ子の表の配下にあるかどうかを判定します。
+    /// セル自身に属する内容と、入れ子の表に属する内容を切り分けるために使います。
+    /// テキストボックスは表ではないため、その中身はセル自身の内容として扱われます。
+    /// Determines whether an element sits under a table nested inside the cell.
+    /// It separates the cell's own content from the content belonging to a nested table.
+    /// A text box is not a table, so its content counts as the cell's own.
+    /// </summary>
+    /// <param name="element">判定対象の要素 / The element to inspect.</param>
+    /// <param name="cell">基準となるセル / The cell used as the boundary.</param>
+    /// <returns>入れ子の表の配下にある場合は true / true when the element is under a nested table.</returns>
+    private static bool IsInsideNestedTable(OpenXmlElement element, DocumentFormat.OpenXml.Wordprocessing.TableCell cell)
+    {
+        for (var ancestor = element.Parent; ancestor != null && !ReferenceEquals(ancestor, cell); ancestor = ancestor.Parent)
+        {
+            if (ancestor is DocumentFormat.OpenXml.Wordprocessing.Table) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 文書内の入れ子の表へ通し番号を振るためのカウンタです。
+    /// ファイル単位で並列処理されるため、インスタンスの状態にはせず文書ごとに生成します。
+    /// A counter that numbers the nested tables within a document.
+    /// Files are processed in parallel, so it is created per document rather than kept as instance state.
+    /// </summary>
+    private sealed class WordNestedTableNumbering
+    {
+        private int _count;
+
+        /// <summary>
+        /// 次の通し番号を採番します / Allocates the next sequential number.
+        /// </summary>
+        public int Next() => ++_count;
     }
 
     /// <summary>
@@ -1353,8 +1468,11 @@ public class FileContentGenerator
     /// Returns the text of a table cell, formatted to fit in a single Markdown table cell.
     /// </summary>
     /// <param name="cell">対象のセル / The target cell.</param>
+    /// <param name="nestedTableReferences">セルへ残す入れ子の表への参照 / The nested table references to keep in the cell.</param>
     /// <returns>整形済みのセルテキスト / The formatted cell text.</returns>
-    private string GetWordCellText(DocumentFormat.OpenXml.Wordprocessing.TableCell cell)
+    private string GetWordCellText(
+        DocumentFormat.OpenXml.Wordprocessing.TableCell cell,
+        IReadOnlyList<string> nestedTableReferences)
     {
         // Markdownの表は1セルを1行で表すため、セル内の複数段落は改行タグで連結する。
         // ただしHTMLタグ無害化が有効な場合は<br>も置換されてしまうため、空白で連結する。
@@ -1368,14 +1486,20 @@ public class FileContentGenerator
         // Text box content inside the cell is enumerated as paragraphs too, so GetWordParagraphText
         // takes only each paragraph's own text (otherwise nested paragraphs are counted twice).
         // The discarded mc:AlternateContent branch is skipped, as it repeats the same content.
-        var paragraphTexts = cell.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>()
+        // 入れ子の表の中身はこのセルの文字ではないため除外する。参照だけを末尾へ添えて、
+        // 表の直後に出力される本体と対応付けられるようにする。
+        // The content of a nested table is not this cell's text, so it is excluded. Only the
+        // reference is appended, tying the cell to the table emitted right after the outer one.
+        var cellParts = cell.Descendants<DocumentFormat.OpenXml.Wordprocessing.Paragraph>()
             .Where(p => !IsInDiscardedAlternateContentBranch(p))
+            .Where(p => !IsInsideNestedTable(p, cell))
             .Select(p => GetWordParagraphText(p).Replace("\r", " ").Replace("\n", " ").Trim())
-            .Where(t => !string.IsNullOrEmpty(t));
+            .Where(t => !string.IsNullOrEmpty(t))
+            .Concat(nestedTableReferences);
 
         // セル内の "|" は列の区切りと解釈されるためエスケープする
         // Escape "|" inside a cell, otherwise it is interpreted as a column separator.
-        return string.Join(separator, paragraphTexts).Replace("|", "\\|");
+        return string.Join(separator, cellParts).Replace("|", "\\|");
     }
 
     /// <summary>

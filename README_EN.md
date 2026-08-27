@@ -28,6 +28,7 @@ The source code of a web application built with this library is publicly availab
 * **🛡️ HTML Sanitization for NotebookLM:** By specifying the `--sanitize-html` option, HTML tags (e.g., `<details>`, `<div>`) included in the output are converted to a harmless format (full-width characters like `＜details＞`) to prevent AI from misinterpreting the code.
 * **⚡ Per-File Parallel Processing:** Content generation is executed in parallel on a per-file basis, leveraging multi-core CPUs to speed up the analysis. This is especially effective for a large number of files involving heavy work such as OCR (`--enable-ocr`). The degree of parallelism is automatically capped at the number of logical processors, and the output order and content remain identical to sequential execution.
 * **📎 Automatic Skipping and Copying of Unsupported Files:** Files that cannot be read as text, such as PDFs and images, are automatically excluded from content extraction so that mojibake never leaks into the output. The originals are copied into the `02_SkippedFiles/` folder of the output, preserving the original directory structure, so a PDF can be uploaded to an AI tool directly.
+* **📊 Structure-Preserving Word Tables:** Word tables are extracted as Markdown tables, including tables placed inside text boxes and shapes. A nested table (a table within a table), which Markdown cannot express, is emitted as a standalone table right after the outer one with a reference left in the cell, so the row and column relationships are never lost.
 * **✂️ Section-Aware Splitting by Size:** To fit the upload limits of tools such as NotebookLM, the output Markdown is split to stay within the threshold given by `--max-size`. Splitting happens only at section boundaries — Excel sheets, PowerPoint slides and Word headings — so content is never cut off mid-section. Each split file repeats the file name and relative path as a shared header.
 
 ## **Requirements**
@@ -191,6 +192,34 @@ If no arguments are provided, the current directory will be analyzed, and the re
 * `--per-file`: Outputs individual Markdown files for each analyzed file.
 * `--enable-ocr`: Enables text extraction from images within Office files using OCR.
 * `--max-size <MB>`: Sets the size threshold per output Markdown file, in MB (default: `4`). Both `--max-size 8` and `--max-size=8` are accepted. See "Splitting by size" below.
+
+### **How Word tables are extracted**
+
+Word tables are converted into Markdown table syntax so that the row and column relationships are preserved. Besides tables in the body, this covers **tables placed inside text boxes and shapes**, as well as tables inside content controls.
+
+A **nested table** (a table within a table) cannot be expressed in Markdown table syntax, so it is emitted as follows.
+
+* The cell keeps **only a reference**, written as `[Nested Table 1]`.
+* The table itself is emitted as a standalone table **right after the outer table**, captioned `**[Nested Table 1]** (row 2, column 2)` to identify the cell it came from.
+* Numbering is sequential within the document. Tables nested three or more levels deep follow the same rule.
+* The output for a document without nested tables is unchanged.
+
+**Example output:**
+
+```text
+| Feature ID | Name | Input fields |
+| --- | --- | --- |
+| F-001 | Order entry | Includes optional fields<br>[Nested Table 1] |
+
+**[Nested Table 1]** (row 2, column 3)
+
+| Field | Type | Required |
+| --- | --- | --- |
+| Order number | string | Yes |
+| Order date | date | Yes |
+```
+
+> **Note:** Tables placed in headers and footers are not extracted at this time.
 
 ### **Handling of unsupported files**
 
