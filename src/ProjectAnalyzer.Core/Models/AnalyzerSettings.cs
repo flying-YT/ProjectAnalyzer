@@ -64,6 +64,12 @@ public class AnalyzerSettings
     public const long DefaultMaxOutputSize = 4 * 1024 * 1024;
 
     /// <summary>
+    /// 内容を抽出できないファイルの原本をコピーする出力先フォルダ名
+    /// The name of the output folder that receives copies of files whose content cannot be extracted.
+    /// </summary>
+    public const string SkippedFilesDirectoryName = "02_SkippedFiles";
+
+    /// <summary>
     /// 一時的なクローンパス（Gitリポジトリの場合） / The temporary clone path (for Git repositories).
     /// </summary>
     public string? TempClonePath { get; }

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Generators;
 
@@ -121,7 +123,60 @@ public class Analyzer: IDisposable
             }
         }
 
+        // 内容を抽出できなかったファイルは、原本をそのまま出力先へコピーする。
+        // PDFなどはテキスト化できないが、コピーがあればAIツールへ直接アップロードできるため。
+        // Files whose content could not be extracted are copied to the output as-is.
+        // A PDF cannot be turned into text, but a copy can be uploaded to an AI tool directly.
+        var skippedFiles = _fileContentGenerator.SkippedBinaryFiles;
+        result.SkippedFiles = skippedFiles
+            .Select(f => Path.GetRelativePath(_settings.ProjectPath, f))
+            .ToList();
+
+        if (_settings.OutputToFile)
+        {
+            CopySkippedFiles(skippedFiles);
+        }
+
         return result;
+    }
+
+    /// <summary>
+    /// 内容を抽出できなかったファイルの原本を、元の階層構造を保ったまま出力先へコピーします。
+    /// 同名ファイルの衝突や生成物との混在を避けるため、専用のサブフォルダへ配置します。
+    /// Copies the originals of files whose content could not be extracted into the output, preserving
+    /// the original directory structure. They go into a dedicated subfolder so that files with the
+    /// same name do not collide and do not mix with the generated Markdown.
+    /// </summary>
+    /// <param name="skippedFiles">コピー対象のファイルパス / The paths of the files to copy.</param>
+    private void CopySkippedFiles(IReadOnlyList<string> skippedFiles)
+    {
+        if (skippedFiles.Count == 0) return;
+
+        Console.WriteLine("📎 Copying unsupported files...");
+
+        string destinationRoot = Path.Combine(_settings.OutputPath, AnalyzerSettings.SkippedFilesDirectoryName);
+        int copiedCount = 0;
+
+        foreach (var sourcePath in skippedFiles)
+        {
+            try
+            {
+                string relativePath = Path.GetRelativePath(_settings.ProjectPath, sourcePath);
+                string destinationPath = Path.Combine(destinationRoot, relativePath);
+
+                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                File.Copy(sourcePath, destinationPath, true);
+                copiedCount++;
+            }
+            catch (Exception ex)
+            {
+                // 1件のコピー失敗で分析全体を止めないよう、警告だけ出して続行する
+                // Warn and continue, so that a single failed copy does not abort the whole analysis.
+                Console.WriteLine($"   [Warning] Could not copy '{Path.GetFileName(sourcePath)}': {ex.Message}");
+            }
+        }
+
+        Console.WriteLine($"   -> Success: Copied {copiedCount} file(s) into '{AnalyzerSettings.SkippedFilesDirectoryName}/'\n");
     }
 
     /// <summary>

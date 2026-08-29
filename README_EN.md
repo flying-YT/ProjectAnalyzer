@@ -27,6 +27,8 @@ The source code of a web application built with this library is publicly availab
 * **🧠 In-Memory Result Retrieval (When using DLL):** You can directly receive the analyzed text data in memory without writing to a file. It also provides an option to omit Markdown code block backticks (\`\`\`), making integration with other systems easy.
 * **🛡️ HTML Sanitization for NotebookLM:** By specifying the `--sanitize-html` option, HTML tags (e.g., `<details>`, `<div>`) included in the output are converted to a harmless format (full-width characters like `＜details＞`) to prevent AI from misinterpreting the code.
 * **⚡ Per-File Parallel Processing:** Content generation is executed in parallel on a per-file basis, leveraging multi-core CPUs to speed up the analysis. This is especially effective for a large number of files involving heavy work such as OCR (`--enable-ocr`). The degree of parallelism is automatically capped at the number of logical processors, and the output order and content remain identical to sequential execution.
+* **📎 Automatic Skipping and Copying of Unsupported Files:** Files that cannot be read as text, such as PDFs and images, are automatically excluded from content extraction so that mojibake never leaks into the output. The originals are copied into the `02_SkippedFiles/` folder of the output, preserving the original directory structure, so a PDF can be uploaded to an AI tool directly.
+* **📊 Structure-Preserving Word Tables:** Word tables are extracted as Markdown tables, including tables placed inside text boxes and shapes. A nested table (a table within a table), which Markdown cannot express, is emitted as a standalone table right after the outer one with a reference left in the cell, so the row and column relationships are never lost.
 * **✂️ Section-Aware Splitting by Size:** To fit the upload limits of tools such as NotebookLM, the output Markdown is split to stay within the threshold given by `--max-size`. Splitting happens only at section boundaries — Excel sheets, PowerPoint slides and Word headings — so content is never cut off mid-section. Each split file repeats the file name and relative path as a shared header.
 
 ## **Requirements**
@@ -191,6 +193,54 @@ If no arguments are provided, the current directory will be analyzed, and the re
 * `--enable-ocr`: Enables text extraction from images within Office files using OCR.
 * `--max-size <MB>`: Sets the size threshold per output Markdown file, in MB (default: `4`). Both `--max-size 8` and `--max-size=8` are accepted. See "Splitting by size" below.
 
+### **How Word tables are extracted**
+
+Word tables are converted into Markdown table syntax so that the row and column relationships are preserved. Besides tables in the body, this covers **tables placed inside text boxes and shapes**, as well as tables inside content controls.
+
+A **nested table** (a table within a table) cannot be expressed in Markdown table syntax, so it is emitted as follows.
+
+* The cell keeps **only a reference**, written as `[Nested Table 1]`.
+* The table itself is emitted as a standalone table **right after the outer table**, captioned `**[Nested Table 1]** (row 2, column 2)` to identify the cell it came from.
+* Numbering is sequential within the document. Tables nested three or more levels deep follow the same rule.
+* The output for a document without nested tables is unchanged.
+
+**Example output:**
+
+```text
+| Feature ID | Name | Input fields |
+| --- | --- | --- |
+| F-001 | Order entry | Includes optional fields<br>[Nested Table 1] |
+
+**[Nested Table 1]** (row 2, column 3)
+
+| Field | Type | Required |
+| --- | --- | --- |
+| Order number | string | Yes |
+| Order date | date | Yes |
+```
+
+> **Note:** Tables placed in headers and footers are not extracted at this time.
+
+### **Handling of unsupported files**
+
+Files that cannot be read as text, such as PDFs and images, would leak mojibake into the output and pollute the context handed to the AI.
+Such files are therefore **automatically excluded from content extraction**, and **their originals are copied to the output** instead.
+
+| Type | Behavior |
+| --- | --- |
+| Source code and text | Content is extracted as before |
+| Word (.docx / .docm), Excel (.xlsx / .xlsm / .xls), PowerPoint (.pptx) | Content is extracted by the dedicated readers |
+| Anything else (PDF, images, archives, executables, ...) | Content is not extracted; the original is copied to `02_SkippedFiles/` |
+
+* **Originals are copied into the `02_SkippedFiles/` folder, preserving the original directory structure.** Files sharing a name in different folders never collide, and they never mix with the generated Markdown.
+  *(For example, `docs/spec.pdf` becomes `output/02_SkippedFiles/docs/spec.pdf`.)*
+* **A copied PDF can be uploaded to an AI tool such as NotebookLM directly.** This tool does not turn a PDF into text, but the AI tool can read it if it supports the format.
+* **The files still appear in the folder tree (`00_ProjectTree.md`).** The context also carries a one-line `[Skipped: unsupported binary file ...]` placeholder, so the AI knows the file exists but its content was not provided.
+* **Detection uses both the extension and the content.** Beyond the known extensions (`.pdf`, `.png`, `.zip`, `.exe`, and so on), a file whose extension is inconclusive has its leading bytes sniffed and is treated as binary when they contain a NUL byte. UTF-16 and UTF-32 text with a BOM is treated as text even though it contains NUL bytes.
+* **Legacy Office formats (`.doc`, `.ppt`) and RTF are treated as unsupported.** Their content is not extracted; only the original is copied.
+* **Nothing is copied when file output is disabled (`outputToFile: false` for DLL usage).** The relative paths of the skipped files are available from `AnalyzerResult.SkippedFiles`.
+* To exclude specific files from the analysis entirely, list them in `.projectanalyzerignore` as before.
+
 ### **Splitting by size**
 
 When uploading the output to tools such as NotebookLM, you may hit the per-source limit.
@@ -205,7 +255,7 @@ A file is split only when **both** of the following hold.
 | --- | --- |
 | Excel (.xlsx / .xlsm / .xls) | Sheet |
 | PowerPoint (.pptx) | Slide |
-| Word (.docx) | Top-level heading (H1) |
+| Word (.docx / .docm) | Top-level heading (H1) |
 | Word (without heading styles), text and source code | Never split |
 
 * **A section is never cut in half.** When a single sheet or slide exceeds the threshold on its own, it is emitted oversized rather than being cut. The threshold is therefore best-effort, not a guarantee.
@@ -328,6 +378,7 @@ After execution, the following files are generated in the specified output folde
   *(Note: If the project file size is large, it will automatically be split into `01_ProjectContext_1.md`, `01_ProjectContext_2.md`, etc.)*
 * When `--per-file` is specified, per-file Markdown is written under `01_ProjectContexts/`, preserving the original directory structure.
   *(Note: Files above the threshold are split into numbered parts such as `Book.xlsx.1.md`, `Book.xlsx.2.md`.)*
+* `02_SkippedFiles/`: Holds copies of the originals of files whose content could not be extracted as text, such as PDFs and images, preserving the original directory structure. The folder is not created when there are no such files. See "Handling of unsupported files" for details.
 
 ## **Project Structure**
 
@@ -346,6 +397,7 @@ This tool is built on a simple architecture based on the separation of concerns 
 * `TreeGenerator.cs`: Generates the folder structure tree for `00_ProjectTree.md`.
 * `FileContentGenerator.cs`: Reads the contents of all files and generates the content for `01_ProjectContext.md`.
 * `LanguageMapper.cs`: Maps file extensions to language identifiers used in Markdown syntax highlighting.
+* `BinaryFileDetector.cs`: Detects files that cannot be read as text, such as PDFs and images.
 
 ## **License**
 
