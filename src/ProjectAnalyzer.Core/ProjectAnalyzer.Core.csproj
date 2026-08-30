@@ -8,15 +8,23 @@
     <PackageId>ProjectAnalyzer.Core</PackageId>
     <Version>1.3.1</Version>
     <Authors>flying-YT</Authors>
-    <Description>指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。ExcelやWordにも対応しています。</Description>
+    <Title>Project Analyzer</Title>
+    <Description>Turns a project folder or GitHub repository - including Word, Excel and PowerPoint documents - into LLM-ready Markdown context for NotebookLM, ChatGPT, Claude and other AI tools. Supports OCR, size-based splitting and HTML sanitizing. / 指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。Word・Excel・PowerPointの読み込みにも対応しています。</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>project;analyzer;llm;markdown;github</PackageTags>
+    <PackageTags>llm;ai;markdown;notebooklm;chatgpt;claude;rag;context;code-analysis;repository;github;docx;xlsx;pptx;office;word;excel;powerpoint;ocr;documentation;cli</PackageTags>
+    <PackageProjectUrl>https://github.com/flying-YT/ProjectAnalyzer</PackageProjectUrl>
     <RepositoryUrl>https://github.com/flying-YT/ProjectAnalyzer</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReleaseNotes>See https://github.com/flying-YT/ProjectAnalyzer/releases for the release notes of each version.</PackageReleaseNotes>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <Copyright>Copyright (c) flying-YT</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>
