@@ -3,6 +3,10 @@
 [![NuGet Version](https://img.shields.io/nuget/v/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
 
+**日本語** | [English](https://github.com/flying-YT/ProjectAnalyzer/blob/master/README_EN.md)
+
+📥 **[最新版をダウンロード (Releases)](https://github.com/flying-YT/ProjectAnalyzer/releases/latest)** ｜ 📦 **[NuGet パッケージ](https://www.nuget.org/packages/ProjectAnalyzer.Core)**
+
 ## **概要**
 
 **Project Analyzer** は、指定されたプロジェクトフォルダ**またはGitHubリポジトリ**の構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいように、Markdownファイルとして出力する.NET製のコマンドラインツールおよびクラスライブラリです。
@@ -53,11 +57,13 @@
   ```bash
   sudo apt-get update
   sudo apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-jpn
+  ```
 
 **🍎 macOS 環境**
 * Homebrewを使用してTesseract本体と多言語データをインストールしてください。
   ```bash
   brew install tesseract tesseract-lang
+  ```
 
 #### 2. 学習済みデータ (tessdata) の配置について
 ソースコードからビルド・実行する場合は、実行ディレクトリ（または src/ProjectAnalyzer.Core/）に tessdata フォルダを作成し、以下の学習済みモデルを配置してください。
@@ -74,7 +80,14 @@
 
 ### **1\. セットアップ**
 
-CLIツールとして使用する場合は、配布されている実行ファイル（ProjectAnalyzer.Cli.exe）をダウンロードするか、ソースコードをローカル環境に準備します。
+CLIツールとして使用する場合は、[**Releases ページ**](https://github.com/flying-YT/ProjectAnalyzer/releases/latest) から実行ファイルをダウンロードするか、ソースコードをローカル環境に準備します。
+
+| ダウンロードするファイル | 対象環境 |
+| --- | --- |
+| `ProjectAnalyzer-vX.Y.Z-win-x64.zip` | Windows (x64) |
+| `ProjectAnalyzer-vX.Y.Z-linux-x64.zip` | Linux (x64) |
+
+zipを展開し、中の `ProjectAnalyzer.Cli.exe`（Linuxでは `ProjectAnalyzer.Cli`）を実行します。.NETランタイムを同梱しているため、別途インストールは不要です。
 
 ご自身のプロジェクトに組み込んで利用する場合は、ProjectAnalyzer.Core をNuGetパッケージ等から追加してください。
 
@@ -276,7 +289,7 @@ PDFや画像などテキストとして読み込めないファイルは、そ�
     ProjectAnalyzer.Cli.exe --no-codeblock
 
     # コードブロック記号を省略し、AIツール向けに記号とインデントを取り除く場合
-    rojectAnalyzer.Cli.exe --no-codeblock --sanitize-html --remove-indent
+    ProjectAnalyzer.Cli.exe --no-codeblock --sanitize-html --remove-indent
 
     # パスを指定して実行
     ProjectAnalyzer.Cli.exe "[分析したいプロジェクトのパス]" "[出力先のパス]"
