@@ -3,6 +3,10 @@
 [![NuGet Version](https://img.shields.io/nuget/v/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/ProjectAnalyzer.Core.svg)](https://www.nuget.org/packages/ProjectAnalyzer.Core)
 
+[日本語](README.md) | **English**
+
+📥 **[Download the latest release](https://github.com/flying-YT/ProjectAnalyzer/releases/latest)** | 📦 **[NuGet package](https://www.nuget.org/packages/ProjectAnalyzer.Core)**
+
 ## **Overview**
 
 **Project Analyzer** is a .NET-based command-line tool and class library that analyzes the structure and content of a specified project folder **or GitHub repository** and outputs it as a Markdown file, making it easily consumable as context for AI (LLMs).
@@ -53,11 +57,13 @@ When using the `--enable-ocr` option to extract text from images, you may need t
   ```bash
   sudo apt-get update
   sudo apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-jpn
+  ```
 
 **🍎 macOS**
 * Use Homebrew to install Tesseract and its language data:
   ```bash
   brew install tesseract tesseract-lang
+  ```
 
 #### 2. Placing Trained Data (tessdata)
 If you are building and running from source, create a tessdata folder in your execution directory (or src/ProjectAnalyzer.Core/) and place the following trained models inside:
@@ -74,7 +80,14 @@ This library uses Tesseract for OCR processing, which requires physical native D
 
 ### **1. Setup**
 
-To use it as a CLI tool, download the distributed executable (`ProjectAnalyzer.Cli.exe`) or prepare the source code in your local environment.
+To use it as a CLI tool, download the executable from the [**Releases page**](https://github.com/flying-YT/ProjectAnalyzer/releases/latest), or prepare the source code in your local environment.
+
+| File to download | Target platform |
+| --- | --- |
+| `ProjectAnalyzer-vX.Y.Z-win-x64.zip` | Windows (x64) |
+| `ProjectAnalyzer-vX.Y.Z-linux-x64.zip` | Linux (x64) |
+
+Extract the zip and run `ProjectAnalyzer.Cli.exe` (`ProjectAnalyzer.Cli` on Linux). The .NET runtime is bundled, so no separate installation is required.
 
 To integrate it into your own project, add `ProjectAnalyzer.Core` via NuGet or other package managers.
 
