@@ -1,5 +1,6 @@
 using System.Text;
 using ProjectAnalyzer.Core.Models;
+using ProjectAnalyzer.Core.Utils;
 
 namespace ProjectAnalyzer.Core.Generators;
 
@@ -10,6 +11,12 @@ namespace ProjectAnalyzer.Core.Generators;
 public class TreeGenerator
 {
     private readonly AnalyzerSettings _settings;
+
+    /// <summary>
+    /// シンボリックリンクであることをツリー上に示す注記です。
+    /// The note shown in the tree to mark an entry as a symbolic link.
+    /// </summary>
+    private const string SymbolicLinkNote = " [symbolic link, not followed]";
 
     /// <summary>
     /// TreeGenerator クラスの新しいインスタンスを初期化します。
@@ -61,15 +68,27 @@ public class TreeGenerator
         {
             var subDir = subDirectories[i];
             bool isLastEntry = (i == subDirectories.Count - 1) && (files.Count == 0);
-            
+
+            // シンボリックリンクは辿らない。リンク先が対象フォルダの外にあると解析対象外のファイルまで
+            // 読み取ってしまい、ループするリンクでは走査が終わらなくなるため。
+            // 存在自体は隠さず、内容を辿っていないことが分かるよう注記を添える。
+            // Symbolic links are not followed. A link pointing outside the analyzed folder would pull in
+            // files that are not part of it, and a link that loops would make the traversal never end.
+            // The entry is still listed, with a note showing that its content was not walked.
+            if (SymbolicLinkDetector.IsSymbolicLink(subDir))
+            {
+                sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{subDir.Name}{SymbolicLinkNote}");
+                continue;
+            }
+
             // 1. 現在のディレクトリの枝を描画
             // 1. Draw the branch for the current directory.
             sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{subDir.Name}");
-            
+
             // 2. 次の階層へ渡すインデントを作成（自分が最後なら空白、続くなら縦線）
             // 2. Create indentation to pass to the next level (space if last, vertical line otherwise).
             string nextIndent = indent + (isLastEntry ? "    " : "│   ");
-            
+
             // 3. 子要素の再帰処理
             // 3. Recursive processing of child elements.
             GenerateRecursive(subDir, nextIndent, sb);
@@ -79,10 +98,14 @@ public class TreeGenerator
         {
             var file = files[i];
             bool isLastEntry = (i == files.Count - 1);
-            
+
+            // ファイルのリンクも同様に、実体を読まずに存在だけを示す
+            // A file link is listed the same way: its presence is shown, its target is not read.
+            string note = SymbolicLinkDetector.IsSymbolicLink(file) ? SymbolicLinkNote : string.Empty;
+
             // 1. 現在のファイルの枝を描画
             // 1. Draw the branch for the current file.
-            sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{file.Name}");
+            sb.AppendLine($"{indent}{(isLastEntry ? "└── " : "├── ")}{file.Name}{note}");
         }
     }
 }
