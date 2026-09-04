@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Generators;
+using ProjectAnalyzer.Core.Utils;
 
 namespace ProjectAnalyzer.Core;
 /// <summary>
@@ -161,6 +162,13 @@ public class Analyzer: IDisposable
         {
             try
             {
+                // リンクをコピーすると、対象フォルダ外にある実体を出力先へ複製してしまう。
+                // 収集の時点で除外済みだが、コピーは内容を外部へ持ち出す操作のためここでも確認する。
+                // Copying a link would duplicate a target living outside the analyzed folder into the
+                // output. Collection already excludes links, but the copy is the step that carries
+                // content outside, so it is checked here as well.
+                if (SymbolicLinkDetector.IsSymbolicLink(sourcePath)) continue;
+
                 string relativePath = Path.GetRelativePath(_settings.ProjectPath, sourcePath);
                 string destinationPath = Path.Combine(destinationRoot, relativePath);
 
@@ -214,14 +222,27 @@ public class Analyzer: IDisposable
 
     /// <summary>
     /// 指定されたディレクトリ内のすべてのファイルの読み取り専用属性を削除します。
+    /// シンボリックリンクは辿りません。SearchOption.AllDirectories はディレクトリのリンクも辿るため、
+    /// リンクを含む一時フォルダを後始末すると、フォルダ外のファイルの属性まで変更してしまうためです。
     /// Removes read-only attributes from all files in the specified directory.
+    /// Symbolic links are not followed: SearchOption.AllDirectories walks into directory links, so
+    /// cleaning up a temporary folder containing one would alter files outside that folder.
     /// </summary>
     /// <param name="directory">処理対象のディレクトリ / The directory to process.</param>
     private void RemoveReadOnlyAttributes(DirectoryInfo directory)
     {
-        foreach (var file in directory.GetFiles("*", SearchOption.AllDirectories))
+        foreach (var file in directory.GetFiles())
         {
+            if (SymbolicLinkDetector.IsSymbolicLink(file)) continue;
+
             file.Attributes &= ~FileAttributes.ReadOnly;
+        }
+
+        foreach (var subDirectory in directory.GetDirectories())
+        {
+            if (SymbolicLinkDetector.IsSymbolicLink(subDirectory)) continue;
+
+            RemoveReadOnlyAttributes(subDirectory);
         }
     }
 }

@@ -147,7 +147,9 @@ public class FileContentGenerator
 
     /// <summary>
     /// 指定されたパス以下のすべてのファイルを取得します（除外リストを考慮）。
+    /// シンボリックリンクは辿らないため、リンク先が対象フォルダの外にあっても読み取られることはありません。
     /// Gets all files under the specified path (considering the ignore list).
+    /// Symbolic links are not followed, so a link pointing outside the analyzed folder is never read.
     /// </summary>
     /// <param name="path">検索を開始するディレクトリパス / The directory path to start searching.</param>
     /// <returns>ファイルパスのリスト / A list of file paths.</returns>
@@ -157,18 +159,28 @@ public class FileContentGenerator
 
         foreach (var file in Directory.GetFiles(path).OrderBy(f => f))
         {
-            if (!_settings.IgnoreList.Contains(Path.GetFileName(file)))
-            {
-                files.Add(file);
-            }
+            if (_settings.IgnoreList.Contains(Path.GetFileName(file))) continue;
+
+            // リンクの実体は対象フォルダの外にありうるため、内容の読み取り対象にはしない。
+            // 存在自体はフォルダツリー(00_ProjectTree.md)に注記付きで残る。
+            // A link's target may live outside the analyzed folder, so it is not read.
+            // Its presence is still recorded in the folder tree (00_ProjectTree.md) with a note.
+            if (SymbolicLinkDetector.IsSymbolicLink(file)) continue;
+
+            files.Add(file);
         }
 
         foreach (var dir in Directory.GetDirectories(path).OrderBy(d => d))
         {
-            if (!_settings.IgnoreList.Contains(Path.GetFileName(dir)))
-            {
-                files.AddRange(GetAllFiles(dir));
-            }
+            if (_settings.IgnoreList.Contains(Path.GetFileName(dir))) continue;
+
+            // ディレクトリのリンクを辿ると、対象フォルダ外まで走査してしまうほか、
+            // ループするリンクでは走査が終わらなくなる。
+            // Following a directory link would walk outside the analyzed folder, and a link that
+            // loops would make the traversal never end.
+            if (SymbolicLinkDetector.IsSymbolicLink(dir)) continue;
+
+            files.AddRange(GetAllFiles(dir));
         }
 
         return files;
