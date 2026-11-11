@@ -7,6 +7,11 @@
 
 📥 **[Download the latest release](https://github.com/flying-YT/ProjectAnalyzer/releases/latest)** | 📦 **[NuGet package](https://www.nuget.org/packages/ProjectAnalyzer.Core)**
 
+> [!IMPORTANT]
+> **Key changes in v1.4.0**
+> * **The OCR engine has changed.** OCR has moved from Tesseract to the **PP-OCRv6 small** model from [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), running on ONNX Runtime. Installing Tesseract on the OS and placing trained data (tessdata) are no longer required; Windows, Linux and macOS all work with the NuGet package alone. Recognition accuracy has also improved substantially for Japanese screenshots, small text and tables.
+> * **The supported .NET versions are now .NET 8 and later.** .NET 6 and .NET 7 are no longer supported (both have reached end of support from Microsoft). To keep using .NET 6 / 7, use v1.3.2 or earlier.
+
 ## **Overview**
 
 **Project Analyzer** is a .NET-based command-line tool and class library that analyzes the structure and content of a specified project folder **or GitHub repository** and outputs it as a Markdown file, making it easily consumable as context for AI (LLMs).
@@ -38,44 +43,28 @@ The source code of a web application built with this library is publicly availab
 
 ## **Requirements**
 
-* **.NET Runtime or SDK** (version 6.0 or later / SDK is required for development or running from source code)
+* **.NET Runtime or SDK** (**version 8.0 or later**; .NET 6 / 7 are not supported as of v1.4.0 / SDK is required for development or running from source code)
 
-### 📷 Prerequisites for the OCR Feature (--enable-ocr)
+### 📷 About the OCR Feature (--enable-ocr)
 
-When using the `--enable-ocr` option to extract text from images, you may need to pre-install the Tesseract engine depending on your operating system.
+As of v1.4.0, text in images is extracted by running the **PP-OCRv6 small** model from [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) (ONNX format, about 31MB) on [ONNX Runtime](https://onnxruntime.ai/), called from .NET through [RapidOcrNet](https://github.com/BobLd/RapidOcrNet). A single model recognizes many languages, including Japanese and English.
 
-> 💡 **On Performance:** While OCR is a CPU-intensive process, this tool processes files in parallel on a per-file basis, so it can significantly reduce processing time in multi-core environments (the degree of parallelism is automatically capped at the number of logical processors).
+* **No OS-level installation is required.** Windows, Linux and macOS all work with only the libraries and models included in the NuGet package.
+* Tesseract, used up to v1.3.2, is no longer used. Installing Tesseract (apt / brew) and placing tessdata, as required by earlier versions, are no longer necessary.
+* Vector images such as EMF/WMF are not OCR'd (the output shows `[OCR Skipped: unsupported image format]`).
 
-> ⚙️ **Note for library (DLL) integration — OpenMP thread settings:** When OCR is enabled, this library automatically sets the process-wide environment variable `OMP_THREAD_LIMIT=1` on first use. This prevents CPU oversubscription, where the per-file parallelism and Tesseract's internal parallelism (which uses all cores per image) compete and slow each other down. This is fine for most cases, but **if your host process also uses other OpenMP-based libraries (e.g., numerical or image processing) whose thread count you want to manage yourself**, set `OMP_THREAD_LIMIT` or `OMP_NUM_THREADS` before using this library. If either is already set, the library will not override it.
+> 💡 **About performance:** OCR is CPU-intensive, but this tool processes files in parallel, which greatly reduces processing time on multi-core machines (the degree of parallelism is automatically capped at the number of logical processors). The OCR engine is pinned to a single internal thread, so the two levels of parallelism never compete and slow each other down. This is configured per ONNX Runtime session; no process-wide environment variables are changed.
 
-#### 1. OS-Specific Requirements
-
-**🪟 Windows**
-* No additional OS-level installation is required. It works automatically using the libraries included in the NuGet package.
-
-**🐧 Linux (Ubuntu / Debian)**
-* You need to install the core OCR engine and Japanese language data. Run the following commands in your terminal:
-  ```bash
-  sudo apt-get update
-  sudo apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-jpn
-  ```
-
-**🍎 macOS**
-* Use Homebrew to install Tesseract and its language data:
-  ```bash
-  brew install tesseract tesseract-lang
-  ```
-
-#### 2. Placing Trained Data (tessdata)
-If you are building and running from source, create a tessdata folder in your execution directory (or src/ProjectAnalyzer.Core/) and place the following trained models inside:
-* [jpn.traineddata (Japanese)](https://github.com/tesseract-ocr/tessdata/blob/main/jpn.traineddata)
-* [eng.traineddata (English)](https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata)
-
-Note: If the native library fails to load on Linux/macOS, a fallback mechanism will automatically activate and use the system-installed tesseract command.
+#### Building from source
+The model files (`src/ProjectAnalyzer.Core/ocr-models/`) are not committed to the repository. They are downloaded automatically on the first build and verified by SHA256 hash (an internet connection is required).
 
 ## **⚠️ Limitations**
 
-This library uses Tesseract for OCR processing, which requires physical native DLLs (e.g., x64/) and trained data (tessdata/) at runtime. Therefore, it does not support .NET's single-file deployment (PublishSingleFile=true). When building or publishing, please use the standard format (which outputs multiple files).
+* The OCR models (ONNX files) are loaded from the `ocr-models/` folder next to the executable. When using .NET single-file deployment (PublishSingleFile=true), specify the following properties as well so that the models and native libraries are bundled into the single file.
+  ```bash
+  dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true
+  ```
+* Vertical Japanese text is recognized character by character, but the reading order of the columns may not be output correctly.
 
 ## **Usage**
 
@@ -421,5 +410,8 @@ This project is released under the **MIT License**.
 
 * **ExcelDataReader** (MIT License)
 * **DocumentFormat.OpenXml** (MIT License)
-* **Tesseract** (Apache License 2.0)
-* **tessdata** (Apache License 2.0)
+* **PaddleOCR / PP-OCRv6** (Apache License 2.0) *The OCR model is redistributed in the NuGet package
+* **RapidOcrNet** (Apache License 2.0)
+* **RapidOCR** (Apache License 2.0)
+* **ONNX Runtime** (MIT License)
+* **SkiaSharp** (MIT License)

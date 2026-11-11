@@ -56,6 +56,32 @@ public class ExcelFileContentGeneratorTests : IDisposable
     }
 
     [Fact]
+    public void Generate_ExtractsTextFromSheetImage_WithOcr_InsideThatSheetSection()
+    {
+        // Arrange: 1枚目のシートに英数字を描画した画像を埋め込み、OCRを有効にする
+        // Embed an image with rendered alphanumeric text in the first sheet, with OCR enabled.
+        var excelPath = Path.Combine(_tempDir, "OcrShapes.xlsx");
+        CreateExcelFileWithShapes(excelPath, TestImages.RenderTextPng("Budget 2026 Total 98765"));
+
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string>(), outputToFile: false, enableOcr: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: 画像内の文字列が読み取られ、1枚目のシートのセクション内（2枚目の見出しより前）に出力されること
+        // The text in the image must be recognized and emitted inside the first sheet's section.
+        int ocrIndex = content.IndexOf("98765", StringComparison.Ordinal);
+        int firstSheetIndex = content.IndexOf("### 1枚目", StringComparison.Ordinal);
+        int secondSheetIndex = content.IndexOf("### 2枚目", StringComparison.Ordinal);
+
+        Assert.Contains("Budget", content);
+        Assert.True(ocrIndex >= 0, "画像内の文字列がOCRで抽出されていません。");
+        Assert.True(firstSheetIndex < ocrIndex && ocrIndex < secondSheetIndex, "OCR結果が1枚目のシートのセクション内にありません。");
+        Assert.DoesNotContain("[OCR Error", content);
+    }
+
+    [Fact]
     public void Generate_PlacesShapesAndImages_InsideEachSheetSection()
     {
         // Arrange: 図形テキストを持つシートを2枚作り、1枚目には画像も埋め込む（OCRは無効のまま）
@@ -251,7 +277,7 @@ public class ExcelFileContentGeneratorTests : IDisposable
     /// テスト用に、図形（テキストボックス）を持つ2シート構成の .xlsx ファイルを生成します。
     /// 1枚目のシートには埋め込み画像も追加します。
     /// </summary>
-    private static void CreateExcelFileWithShapes(string path)
+    private static void CreateExcelFileWithShapes(string path, byte[]? firstSheetImage = null)
     {
         using var document = SpreadsheetDocument.Create(path, SpreadsheetDocumentType.Workbook);
 
@@ -259,7 +285,7 @@ public class ExcelFileContentGeneratorTests : IDisposable
         workbookPart.Workbook = new Workbook();
         var sheets = workbookPart.Workbook.AppendChild(new Sheets());
 
-        AppendSheetWithShape(workbookPart, sheets, sheetId: 1, name: "1枚目", cellValue: "1枚目のセル", shapeText: "1枚目の図形テキスト", withImage: true);
+        AppendSheetWithShape(workbookPart, sheets, sheetId: 1, name: "1枚目", cellValue: "1枚目のセル", shapeText: "1枚目の図形テキスト", withImage: true, imageBytes: firstSheetImage);
         AppendSheetWithShape(workbookPart, sheets, sheetId: 2, name: "2枚目", cellValue: "2枚目のセル", shapeText: "2枚目の図形テキスト", withImage: false);
 
         workbookPart.Workbook.Save();
@@ -268,7 +294,7 @@ public class ExcelFileContentGeneratorTests : IDisposable
     /// <summary>
     /// 1行のセルと1つのテキストボックスを持つシートをブックへ追加します。
     /// </summary>
-    private static void AppendSheetWithShape(WorkbookPart workbookPart, Sheets sheets, uint sheetId, string name, string cellValue, string shapeText, bool withImage)
+    private static void AppendSheetWithShape(WorkbookPart workbookPart, Sheets sheets, uint sheetId, string name, string cellValue, string shapeText, bool withImage, byte[]? imageBytes = null)
     {
         var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
         var sheetData = new SheetData();
@@ -293,9 +319,10 @@ public class ExcelFileContentGeneratorTests : IDisposable
 
         if (withImage)
         {
-            // 1x1ピクセルのPNG（OCRは行わないため内容は問わない）
+            // 画像の指定がなければ1x1ピクセルのPNG（OCRを行わないテストでは内容は問わない）
+            // Without an explicit image, use a 1x1 pixel PNG (its content is irrelevant when OCR is off).
             var imagePart = drawingsPart.AddImagePart(ImagePartType.Png);
-            using var imageStream = new MemoryStream(Convert.FromBase64String(
+            using var imageStream = new MemoryStream(imageBytes ?? Convert.FromBase64String(
                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="));
             imagePart.FeedData(imageStream);
         }

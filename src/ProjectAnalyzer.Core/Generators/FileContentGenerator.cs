@@ -13,7 +13,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentFormat.OpenXml.Presentation;
 using ProjectAnalyzer.Core.Models;
 using ProjectAnalyzer.Core.Utils;
-using Tesseract;
+using ProjectAnalyzer.Core.Ocr;
 
 namespace ProjectAnalyzer.Core.Generators;
 
@@ -39,30 +39,6 @@ public class FileContentGenerator
     /// The caller can use them for post-processing, such as copying the originals as-is.
     /// </summary>
     public IReadOnlyList<string> SkippedBinaryFiles => _skippedBinaryFiles;
-
-    /// <summary>
-    /// 静的コンストラクタ。OCR(Tesseract)の内部OpenMP並列を1スレッドに制限します。
-    /// Tesseractは1画像あたり全コアを使って並列処理するため、本ツールのファイル単位並列と
-    /// 二重になるとCPUのオーバーサブスクリプション（スレッド過多）が発生し、かえって低速化します。
-    /// 並列化をファイル単位に一本化するため、ユーザーが明示指定していない場合のみ1スレッドに固定します。
-    /// この設定はプロセス内のlibtesseractと、フォールバックで起動するtesseract子プロセスの双方に効きます。
-    /// Static constructor. Caps Tesseract's internal OpenMP parallelism to a single thread.
-    /// Tesseract parallelizes each image across all cores; combined with this tool's per-file
-    /// parallelism it causes CPU oversubscription and slowdown. To keep parallelism at the file
-    /// level only, we pin the thread count to 1 unless the user has set it explicitly. This applies
-    /// to both the in-process libtesseract and the fallback tesseract child processes.
-    /// </summary>
-    static FileContentGenerator()
-    {
-        bool userConfigured =
-            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OMP_THREAD_LIMIT"))
-            || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OMP_NUM_THREADS"));
-
-        if (!userConfigured)
-        {
-            Environment.SetEnvironmentVariable("OMP_THREAD_LIMIT", "1");
-        }
-    }
 
     /// <summary>
     /// FileContentGenerator クラスの新しいインスタンスを初期化します。
@@ -648,132 +624,43 @@ public class FileContentGenerator
     }
 
     /// <summary>
-    /// Tesseractを使用して画像からテキストを抽出します。
-    /// </summary>
-    private string ReadImageTextWithOcr(string filePath)
-    {
-        try
-        {
-            // 実行されているアプリケーションのベースディレクトリ（dllやexeが展開されている場所）を取得
-            string baseDir = AppContext.BaseDirectory;
-            string tessDataPath = Path.Combine(baseDir, "tessdata");     
-
-            if (Directory.Exists(tessDataPath))
-            {
-                using (var engine = new TesseractEngine(tessDataPath, "jpn+eng", EngineMode.Default))
-                using (var img = Pix.LoadFromFile(filePath))
-                using (var page = engine.Process(img))
-                {
-                    string text = page.GetText().Trim();
-                    
-                    // ★追加: 日本語（非ASCII文字）に隣接する空白（スペース・タブ）を除去する（改行は維持）
-                    text = Regex.Replace(text, @"(?<=[^\x00-\x7F])[ \t　]+|[ \t　]+(?=[^\x00-\x7F])", "");
-                    
-                    return text;
-                }
-            }
-            return ReadImageTextWithCommandLine(filePath);
-        }
-        catch
-        {
-            return ReadImageTextWithCommandLine(filePath);
-        }
-    }
-
-    /// <summary>
-    /// OSにインストールされている Tesseract コマンドを直接呼び出してOCRを実行します。(Linux向けフォールバック)
-    /// </summary>
-    private string ReadImageTextWithCommandLine(string filePath)
-    {
-        try
-        {
-            // tesseractコマンドの出力先(拡張子.txtが自動で付くため拡張子なしのパスを指定)
-            string tempOutputFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-            
-            // コマンド引数: [入力画像パス] [出力テキストパス] -l jpn+eng
-            var processInfo = new System.Diagnostics.ProcessStartInfo("tesseract", $"\"{filePath}\" \"{tempOutputFile}\" -l jpn+eng")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            // 静的コンストラクタで決定したOpenMPスレッド制限を、子プロセス(tesseract)へ確実に継承させる。
-            // ファイル単位並列と二重にならないようにするため（オーバーサブスクリプション回避）。
-            // Ensure the child tesseract process inherits the OpenMP thread limit decided in the static
-            // constructor, to avoid oversubscription with the tool's per-file parallelism.
-            var ompThreadLimit = Environment.GetEnvironmentVariable("OMP_THREAD_LIMIT");
-            if (!string.IsNullOrEmpty(ompThreadLimit))
-            {
-                processInfo.EnvironmentVariables["OMP_THREAD_LIMIT"] = ompThreadLimit;
-            }
-
-            using var process = System.Diagnostics.Process.Start(processInfo);
-            process?.WaitForExit();
-
-            string resultFilePath = tempOutputFile + ".txt";
-            
-            if (File.Exists(resultFilePath))
-            {
-                string text = File.ReadAllText(resultFilePath);
-                File.Delete(resultFilePath); // 読み終わった一時ファイルを削除
-
-                // 日本語（非ASCII文字）に隣接する空白（スペース・タブ）を除去する
-                text = Regex.Replace(text, @"(?<=[^\x00-\x7F])[ \t　]+|[ \t　]+(?=[^\x00-\x7F])", "");
-                
-                return text;
-            }
-            
-            string error = process?.StandardError.ReadToEnd() ?? "Unknown error";
-            return $"[OCR Command Error: {error}]";
-        }
-        catch (Exception ex)
-        {
-            return $"[OCR Fallback Error: {ex.Message}]";
-        }
-    }
-
-    /// <summary>
     /// 画像パーツからOCRテキストを抽出する共通メソッドです。
+    /// OCRには PP-OCRv6 small (ONNX Runtime) を使用し、画像は一時ファイルを介さずメモリ上でデコードします。
     /// A common method to extract OCR text from an image part.
+    /// OCR runs PP-OCRv6 on ONNX Runtime, and the image is decoded in memory without a temporary file.
     /// </summary>
     private string ProcessImagePartOcr(DocumentFormat.OpenXml.Packaging.ImagePart imagePart, ref int imageCount)
     {
         var sb = new StringBuilder();
+        sb.AppendLine($"\n--- Embedded Image {imageCount} (ContentType: {imagePart.ContentType}) ---");
+
         try
         {
+            byte[] imageBytes;
             using (var stream = imagePart.GetStream())
             using (var ms = new MemoryStream())
             {
                 stream.CopyTo(ms);
-                byte[] imageBytes = ms.ToArray();
-                
-                // 拡張子がないとOCRエンジン(Leptonica)が画像フォーマットを誤認するため明示的に付与
-                string tempFilePath = Path.GetTempFileName();
-                string ext = imagePart.ContentType.Contains("jpeg") ? ".jpg" : ".png";
-                string newTempFilePath = tempFilePath + ext;
-                
-                // .tmpファイルをリネームしてから書き込む
-                File.Move(tempFilePath, newTempFilePath);
-                File.WriteAllBytes(newTempFilePath, imageBytes);
-                
-                // OCR実行 (このメソッド内でネイティブDLLエラー時のフォールバックが考慮されています)
-                string ocrText = ReadImageTextWithOcr(newTempFilePath);
-                
-                // デバッグのため、エラーでも空でも強制的に出力する
-                sb.AppendLine($"\n--- Embedded Image {imageCount} (ContentType: {imagePart.ContentType}) ---");
-                sb.AppendLine(string.IsNullOrWhiteSpace(ocrText) ? "[No Text Found]" : ocrText);
-                
-                if (File.Exists(newTempFilePath)) File.Delete(newTempFilePath);
+                imageBytes = ms.ToArray();
             }
+
+            string ocrText = PaddleOcrEngine.Recognize(imageBytes);
+
+            // 結果が空でも、画像が存在したことが分かるように必ず出力する
+            // Always emit a result, even when empty, so that the presence of the image is visible.
+            sb.AppendLine(string.IsNullOrWhiteSpace(ocrText) ? "[No Text Found]" : ocrText);
+        }
+        catch (NotSupportedException)
+        {
+            // EMF/WMF などのベクター形式はデコードできないため、OCRせずに明示する
+            // Vector formats such as EMF/WMF cannot be decoded, so say so instead of running OCR.
+            sb.AppendLine("[OCR Skipped: unsupported image format]");
         }
         catch (Exception ex)
         {
-            sb.AppendLine($"\n--- Embedded Image {imageCount} Error ---");
-            sb.AppendLine(ex.Message);
+            sb.AppendLine($"[OCR Error: {ex.Message}]");
         }
-        
+
         imageCount++;
         return sb.ToString();
     }
@@ -1642,10 +1529,10 @@ public class FileContentGenerator
     {
         var results = new List<string>[allFiles.Count];
 
-        // 並列度は論理プロセッサ数に制限する。無制限だと画像ごとにTesseractEngineを大量生成し、
-        // メモリやネイティブライブラリへの負荷が過大になるため。
-        // Cap parallelism at the logical processor count. Unbounded parallelism would spawn many
-        // TesseractEngine instances per image, overloading memory and the native library.
+        // 並列度は論理プロセッサ数に制限する。OCRエンジンは内部スレッド1本で動かしているため、
+        // ここでの並列度がそのままCPU使用コア数になる。
+        // Cap parallelism at the logical processor count. The OCR engine runs with a single internal
+        // thread, so this degree directly determines how many cores are used.
         var parallelOptions = new ParallelOptions
         {
             MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
@@ -1658,10 +1545,11 @@ public class FileContentGenerator
         // and are collected afterwards in the original file order.
         var isBinary = new bool[allFiles.Count];
 
-        // GenerateMarkdownPartsForFile は共有可変状態を持たない（_settings は読み取り専用、一時ファイルは一意名、
-        // 例外は内部で捕捉）ため、ファイル単位の並列実行はスレッドセーフである。
-        // GenerateMarkdownPartsForFile has no shared mutable state (read-only _settings, unique temp file
-        // names, exceptions caught internally), so per-file parallel execution is thread-safe.
+        // GenerateMarkdownPartsForFile は共有可変状態を持たない（_settings は読み取り専用、共有するOCRエンジンは
+        // 初期化後に状態が変わらずスレッドセーフ、例外は内部で捕捉）ため、ファイル単位の並列実行はスレッドセーフである。
+        // GenerateMarkdownPartsForFile has no shared mutable state (read-only _settings, the shared OCR engine is
+        // immutable after initialization and thread-safe, exceptions caught internally), so per-file parallel
+        // execution is thread-safe.
         Parallel.For(0, allFiles.Count, parallelOptions, i =>
         {
             // Office形式は中身がZIPやOLEでバイナリと判定されてしまうため、専用の抽出処理を先に通す

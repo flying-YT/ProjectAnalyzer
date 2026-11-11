@@ -56,6 +56,32 @@ public class PowerPointFileContentGeneratorTests : IDisposable
     }
 
     [Fact]
+    public void Generate_ExtractsTextFromSlideImage_WithOcr_InsideThatSlideSection()
+    {
+        // Arrange: 1枚目のスライドに英数字を描画した画像を埋め込み、OCRを有効にする
+        // Embed an image with rendered alphanumeric text in the first slide, with OCR enabled.
+        var pptxPath = Path.Combine(_tempDir, "OcrDeck.pptx");
+        CreatePowerPointFileWithImage(pptxPath, TestImages.RenderTextPng("Roadmap Q3 Release 24680"), "1枚目のテキスト", "2枚目のテキスト");
+
+        var settings = new AnalyzerSettings(_tempDir, "", new HashSet<string>(), outputToFile: false, enableOcr: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
+
+        // Assert: 画像内の文字列が読み取られ、1枚目のスライドのセクション内に出力されること
+        // The text in the image must be recognized and emitted inside the first slide's section.
+        int ocrIndex = content.IndexOf("24680", StringComparison.Ordinal);
+        int firstSlideIndex = content.IndexOf("### Slide 1", StringComparison.Ordinal);
+        int secondSlideIndex = content.IndexOf("### Slide 2", StringComparison.Ordinal);
+
+        Assert.Contains("Roadmap", content);
+        Assert.True(ocrIndex >= 0, "画像内の文字列がOCRで抽出されていません。");
+        Assert.True(firstSlideIndex < ocrIndex && ocrIndex < secondSlideIndex, "OCR結果が1枚目のスライドのセクション内にありません。");
+        Assert.DoesNotContain("[OCR Error", content);
+    }
+
+    [Fact]
     public void Generate_SplitsPowerPointIntoParts_PerSlide_WhenExceedingMaxOutputSize()
     {
         // Arrange: それぞれ単体でしきい値を超えるスライドを2枚持つ .pptx を作成する
@@ -107,6 +133,15 @@ public class PowerPointFileContentGeneratorTests : IDisposable
     /// </summary>
     private static void CreatePowerPointFile(string path, params string[] slideTexts)
     {
+        CreatePowerPointFileWithImage(path, null, slideTexts);
+    }
+
+    /// <summary>
+    /// テスト用の .pptx ファイルを生成します。画像を指定した場合は1枚目のスライドに埋め込みます。
+    /// Creates a .pptx file for tests. When an image is given, it is embedded in the first slide.
+    /// </summary>
+    private static void CreatePowerPointFileWithImage(string path, byte[]? firstSlideImage, params string[] slideTexts)
+    {
         using var document = PresentationDocument.Create(path, PresentationDocumentType.Presentation);
 
         var presentationPart = document.AddPresentationPart();
@@ -119,6 +154,13 @@ public class PowerPointFileContentGeneratorTests : IDisposable
         {
             var slidePart = presentationPart.AddNewPart<SlidePart>();
             slidePart.Slide = CreateSlide(text);
+
+            if (firstSlideImage != null && slideId == 256U)
+            {
+                var imagePart = slidePart.AddImagePart(ImagePartType.Png);
+                using var imageStream = new MemoryStream(firstSlideImage);
+                imagePart.FeedData(imageStream);
+            }
 
             slideIdList.Append(new SlideId
             {
