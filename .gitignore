@@ -370,3 +370,5 @@ FodyWeavers.xsd
 
 # claude
 .claude
+# OCRモデルはビルド時に自動ダウンロードする / OCR models are downloaded at build time
+src/ProjectAnalyzer.Core/ocr-models/

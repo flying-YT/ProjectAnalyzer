@@ -7,6 +7,11 @@
 
 📥 **[最新版をダウンロード (Releases)](https://github.com/flying-YT/ProjectAnalyzer/releases/latest)** ｜ 📦 **[NuGet パッケージ](https://www.nuget.org/packages/ProjectAnalyzer.Core)**
 
+> [!IMPORTANT]
+> **v1.4.0 での主な変更点**
+> * **OCRエンジンを変更しました。** Tesseract から、[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) の **PP-OCRv6 small** モデル（ONNX Runtime で実行）へ移行しました。OS側へのTesseractのインストールや学習データ（tessdata）の配置は不要になり、Windows / Linux / macOS のいずれもNuGetパッケージだけで動作します。日本語の画面キャプチャ・小さい文字・表などの認識精度も大きく向上しています。
+> * **対応する .NET のバージョンを .NET 8 以降に変更しました。** .NET 6 / .NET 7 はサポート対象外となりました（いずれもマイクロソフトのサポートが終了しています）。引き続き .NET 6 / 7 で利用する場合は v1.3.2 以前をご利用ください。
+
 ## **概要**
 
 **Project Analyzer** は、指定されたプロジェクトフォルダ**またはGitHubリポジトリ**の構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいように、Markdownファイルとして出力する.NET製のコマンドラインツールおよびクラスライブラリです。
@@ -38,44 +43,28 @@
 
 ## **必要なもの**
 
-* **.NET ランタイム または SDK** (バージョン 6.0 以降 / 開発やソースコードからの実行にはSDKが必要です)
+* **.NET ランタイム または SDK** (**バージョン 8.0 以降**。v1.4.0 から .NET 6 / 7 はサポート対象外です / 開発やソースコードからの実行にはSDKが必要です)
 
-### 📷 OCR機能（--enable-ocr）を利用するための事前準備
+### 📷 OCR機能（--enable-ocr）について
 
-画像内の文字抽出を行う `--enable-ocr` オプションを利用する場合、実行するOS環境によってはTesseractエンジンの事前インストールが必要です。
+v1.4.0 から、画像内の文字抽出には [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) の **PP-OCRv6 small** モデル（ONNX形式、約31MB）を [ONNX Runtime](https://onnxruntime.ai/) 上で実行します（.NETからの呼び出しには [RapidOcrNet](https://github.com/BobLd/RapidOcrNet) を使用）。日本語・英語を含む多言語を1つのモデルで認識します。
 
-> 💡 **パフォーマンスについて:** OCRはCPUを多く消費する処理ですが、本ツールはファイル単位で並列処理を行うため、マルチコア環境では処理時間を大幅に短縮できます（並列度は論理プロセッサ数に自動制限されます）。
+* **OS側への追加インストールは不要です。** Windows / Linux / macOS のいずれも、NuGetパッケージに含まれるライブラリとモデルだけで動作します。
+* v1.3.2 以前で使用していた Tesseract は使用しなくなりました。以前のバージョンで必要だった Tesseract のインストール（apt / brew）や tessdata の配置は不要です。
+* EMF/WMF などのベクター画像はOCRの対象外です（出力には `[OCR Skipped: unsupported image format]` と表示されます）。
 
-> ⚙️ **ライブラリ（DLL）として組み込む場合の注意 ― OpenMPスレッド設定:** OCRを有効にすると、本ライブラリは初回利用時にプロセス全体の環境変数 `OMP_THREAD_LIMIT=1` を自動的に設定します。これは、ファイル単位の並列処理とTesseract内部の並列処理（1画像あたり全コアを使用）が競合してかえって低速化する「オーバーサブスクリプション」を防ぐためです。通常はそのままで問題ありませんが、**同一プロセス内で他のOpenMPベースのライブラリ（数値計算・画像処理など）も利用しており、そのスレッド数をご自身で管理したい場合**は、本ライブラリを利用する前に `OMP_THREAD_LIMIT` または `OMP_NUM_THREADS` を設定してください。いずれかが既に設定済みの場合、本ライブラリは値を上書きしません。
+> 💡 **パフォーマンスについて:** OCRはCPUを多く消費する処理ですが、本ツールはファイル単位で並列処理を行うため、マルチコア環境では処理時間を大幅に短縮できます（並列度は論理プロセッサ数に自動制限されます）。OCRエンジン内部のスレッドは1本に固定しているため、並列処理が二重になってかえって低速化することはありません。この設定はONNX Runtimeのセッション単位で行っており、プロセス全体の環境変数は変更しません。
 
-#### 1. OSごとの必須要件
-
-**🪟 Windows 環境**
-* OS側への追加インストールは不要です。NuGetパッケージに含まれるライブラリで自動的に動作します。
-
-**🐧 Linux (Ubuntu / Debian) 環境**
-* OCRエンジン本体と日本語データのインストールが必要です。ターミナルで以下のコマンドを実行してください。
-  ```bash
-  sudo apt-get update
-  sudo apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-jpn
-  ```
-
-**🍎 macOS 環境**
-* Homebrewを使用してTesseract本体と多言語データをインストールしてください。
-  ```bash
-  brew install tesseract tesseract-lang
-  ```
-
-#### 2. 学習済みデータ (tessdata) の配置について
-ソースコードからビルド・実行する場合は、実行ディレクトリ（または src/ProjectAnalyzer.Core/）に tessdata フォルダを作成し、以下の学習済みモデルを配置してください。
-* [jpn.traineddata (日本語)](https://github.com/tesseract-ocr/tessdata/blob/main/jpn.traineddata)
-* [eng.traineddata (英語)](https://github.com/tesseract-ocr/tessdata/blob/main/eng.traineddata)
-
-※Linux/macOS環境でネイティブライブラリの読み込みに失敗した場合は、自動的にOSにインストールされた tesseract コマンドを使用するフォールバック機能が作動します。
+#### ソースコードからビルドする場合
+モデルファイル（`src/ProjectAnalyzer.Core/ocr-models/`）はリポジトリに含めていません。初回ビルド時に自動でダウンロードされ、SHA256ハッシュで検証されます（インターネット接続が必要です）。
 
 ## **⚠️ 制限事項**
 
-本ライブラリはOCR処理に Tesseract を使用しており、実行時に物理的なネイティブDLL（x64/ 等）と学習データ（tessdata/）を必要とします。そのため、.NETの 単一ファイル発行 (PublishSingleFile=true) には対応していません。ビルドや発行を行う際は、通常の形式（複数ファイルが出力される形式）でご利用ください。
+* OCRモデル（ONNXファイル）は実行ファイルと同じ場所の `ocr-models/` フォルダから読み込みます。.NETの単一ファイル発行 (PublishSingleFile=true) を使う場合は、モデルとネイティブライブラリも1ファイルに含めるため、次のプロパティを併せて指定してください。
+  ```bash
+  dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true
+  ```
+* 縦書きの日本語は、文字は認識できますが列の読み順が正しく出力されない場合があります。
 
 ## **使い方**
 
@@ -421,5 +410,8 @@ foreach (var context in result.ProjectContexts)
 
 * **[ExcelDataReader](https://github.com/ExcelDataReader/ExcelDataReader)** (MIT License)
 * **[DocumentFormat.OpenXml](https://github.com/dotnet/Open-XML-SDK)** (MIT License)
-* **[Tesseract](https://github.com/charlesw/tesseract/)** (Apache License 2.0)
-* **[tessdata](https://github.com/tesseract-ocr/tessdata)** (Apache License 2.0)
+* **[PaddleOCR / PP-OCRv6](https://github.com/PaddlePaddle/PaddleOCR)** (Apache License 2.0) ※OCRモデルはNuGetパッケージに同梱して再配布しています
+* **[RapidOcrNet](https://github.com/BobLd/RapidOcrNet)** (Apache License 2.0)
+* **[RapidOCR](https://github.com/RapidAI/RapidOCR)** (Apache License 2.0)
+* **[ONNX Runtime](https://github.com/microsoft/onnxruntime)** (MIT License)
+* **[SkiaSharp](https://github.com/mono/SkiaSharp)** (MIT License)

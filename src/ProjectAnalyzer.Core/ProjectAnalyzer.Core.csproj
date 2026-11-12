@@ -1,12 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net6.0;net7.0;net8.0;net9.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
     <PackageId>ProjectAnalyzer.Core</PackageId>
-    <Version>1.3.2</Version>
+    <Version>1.4.0</Version>
     <Authors>flying-YT</Authors>
     <Title>Project Analyzer</Title>
     <Description>Turns a project folder or GitHub repository - including Word, Excel and PowerPoint documents - into LLM-ready Markdown context for NotebookLM, ChatGPT, Claude and other AI tools. Supports OCR, size-based splitting and HTML sanitizing. / 指定されたプロジェクトフォルダまたはGitHubリポジトリの構造と内容を分析し、AI (LLM) のコンテキストとして利用しやすいようにMarkdownとして出力するライブラリです。Word・Excel・PowerPointの読み込みにも対応しています。</Description>
@@ -23,39 +23,72 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="OcrBenchmark" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <None Include="..\..\icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!--
+    OCRモデル (PP-OCRv6 small, ONNX)。リポジトリには含めず、ソースからのビルド時に未取得であれば自動でダウンロードし、
+    SHA256を検証する。NuGetパッケージには同梱されるため、パッケージ利用者側でのダウンロードは不要。
+    OCR models (PP-OCRv6 small, ONNX). They are not committed; a source build downloads any missing file and
+    verifies its SHA256. They are bundled into the NuGet package, so package consumers download nothing.
+  -->
+  <PropertyGroup>
+    <!--
+      取得元は RapidOcrNet リポジトリ（Apache-2.0）の同梱モデルで、コミットを固定している。PaddleOCR公式のONNXモデルと同一で、
+      SHA256で検証する。ModelScopeはUser-Agentの無いリクエスト（MSBuildのDownloadFile）を拒否するため使わない。
+      The source is the models bundled in the RapidOcrNet repository (Apache-2.0), pinned to a commit. They are
+      identical to the official PaddleOCR ONNX models and verified by SHA256. ModelScope is not used because it
+      rejects requests without a User-Agent, which MSBuild's DownloadFile sends.
+    -->
+    <OcrModelBaseUrl>https://raw.githubusercontent.com/BobLd/RapidOcrNet/9d1f9f1f6c3ec6f0da123a420842390de9b97268/RapidOcrNet/models</OcrModelBaseUrl>
+    <OcrModelDir>$(MSBuildProjectDirectory)/ocr-models</OcrModelDir>
+  </PropertyGroup>
+
   <ItemGroup>
-    <Content Include="tessdata\**\*">
+    <OcrModelFile Include="ocr-models/PP-OCRv6_det_small.onnx" Url="$(OcrModelBaseUrl)/v6/PP-OCRv6_det_small.onnx" Sha256="090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f" />
+    <OcrModelFile Include="ocr-models/PP-OCRv6_rec_small.onnx" Url="$(OcrModelBaseUrl)/v6/PP-OCRv6_rec_small.onnx" Sha256="6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884" />
+    <OcrModelFile Include="ocr-models/ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" Url="$(OcrModelBaseUrl)/v5/ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" Sha256="54379ae5174d026780215fc748a7f31910dee36818e63d49e17dc598ecc82df7" />
+    <OcrModelFile Include="ocr-models/ppocrv6_dict.txt" Url="$(OcrModelBaseUrl)/v6/ppocrv6_dict.txt" Sha256="b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d" />
+
+    <Content Include="@(OcrModelFile)">
       <Pack>true</Pack>
-      <PackagePath>contentFiles\any\any\tessdata;content\tessdata</PackagePath>
+      <PackagePath>contentFiles\any\any\ocr-models</PackagePath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <PackageCopyToOutput>true</PackageCopyToOutput>
     </Content>
-
-    <None Include="ProjectAnalyzer.Core.targets">
-      <Pack>true</Pack>
-      <PackagePath>build\;buildTransitive\</PackagePath>
-    </None>
-
-    <None Include="bin\$(Configuration)\net9.0\x64\**\*">
-      <Pack>true</Pack>
-      <PackagePath>native-assets\x64\</PackagePath>
-    </None>
-    
-    <None Include="bin\$(Configuration)\net9.0\x86\**\*">
-      <Pack>true</Pack>
-      <PackagePath>native-assets\x86\</PackagePath>
-    </None>
   </ItemGroup>
+
+  <!--
+    マルチターゲットの各ビルドや参照元プロジェクトから同時に実行されても壊れないよう、一意な一時ファイルへ
+    ダウンロードしてから置き換える。
+    Download to a unique temporary file and then move it into place, so that concurrent runs from the
+    per-framework builds or referencing projects cannot corrupt the file.
+  -->
+  <Target Name="DownloadOcrModels" BeforeTargets="BeforeBuild;GenerateNuspec">
+    <PropertyGroup>
+      <_OcrDownloadId>$([System.Guid]::NewGuid().ToString("N"))</_OcrDownloadId>
+    </PropertyGroup>
+    <MakeDir Directories="$(OcrModelDir)" />
+    <DownloadFile SourceUrl="%(OcrModelFile.Url)" DestinationFolder="$(OcrModelDir)" DestinationFileName="%(OcrModelFile.Filename)%(OcrModelFile.Extension).$(_OcrDownloadId).tmp" Retries="3" Condition="!Exists('%(OcrModelFile.FullPath)')" />
+    <Move SourceFiles="$(OcrModelDir)/%(OcrModelFile.Filename)%(OcrModelFile.Extension).$(_OcrDownloadId).tmp" DestinationFiles="%(OcrModelFile.FullPath)" Condition="Exists('$(OcrModelDir)/%(OcrModelFile.Filename)%(OcrModelFile.Extension).$(_OcrDownloadId).tmp')" />
+    <GetFileHash Files="@(OcrModelFile)" Algorithm="SHA256" HashEncoding="hex">
+      <Output TaskParameter="Items" ItemName="_OcrModelHash" />
+    </GetFileHash>
+    <Error Condition="'%(_OcrModelHash.FileHash)' != '%(_OcrModelHash.Sha256)'" Text="OCR model hash mismatch: %(_OcrModelHash.Identity). Delete the file and rebuild to download it again." />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.4.1" />
     <PackageReference Include="ExcelDataReader" Version="3.8.0" />
     <PackageReference Include="ExcelDataReader.DataSet" Version="3.8.0" />
+    <!-- RapidOcrNet同梱のv5ラテン文字モデルは使わないため、モデルをコピーするbuildアセットを除外する
+         The bundled PP-OCRv5 Latin models are unused, so exclude the build assets that copy them. -->
+    <PackageReference Include="RapidOcrNet" Version="4.2.0" ExcludeAssets="build" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.3" />
-    <PackageReference Include="Tesseract" Version="5.2.0" />
   </ItemGroup>
 </Project>

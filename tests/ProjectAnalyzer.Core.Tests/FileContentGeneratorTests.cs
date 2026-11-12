@@ -248,9 +248,9 @@ public class FileContentGeneratorTests : IDisposable
         var content = string.Concat(generator.Generate()).Replace("\r\n", "\n");
 
         // Assert: OCR結果が、画像を含む段落の位置（前後の段落の間）へ出力されていること。
-        // OCRの成否は環境に依存するため、必ず出力される見出し行の位置で検証する。
-        // The OCR result must be emitted between the surrounding paragraphs. OCR success depends on the
-        // environment, so the position is verified with the header line that is always emitted.
+        // 画像は1x1ピクセルで文字を含まないため、必ず出力される見出し行の位置で検証する。
+        // The OCR result must be emitted between the surrounding paragraphs. The image is a 1x1 pixel with
+        // no text, so the position is verified with the header line that is always emitted.
         int beforeIndex = content.IndexOf("画像の前の段落", StringComparison.Ordinal);
         int ocrIndex = content.IndexOf("--- Embedded Image 1", StringComparison.Ordinal);
         int afterIndex = content.IndexOf("画像の後の段落", StringComparison.Ordinal);
@@ -263,6 +263,59 @@ public class FileContentGeneratorTests : IDisposable
         // 位置が特定できた画像は、末尾のフォールバックセクションへは出力されないこと
         // An image whose position was determined must not also land in the trailing fallback section.
         Assert.DoesNotContain("[Embedded Images]", content);
+    }
+
+    [Fact]
+    public void Generate_ExtractsTextFromEmbeddedImage_WithPpOcr()
+    {
+        // Arrange: 英数字を描画した画像を埋め込んだ .docx を作成し、OCRを有効にする
+        // Create a .docx embedding an image with rendered alphanumeric text, with OCR enabled.
+        var tempFile = Path.Combine(_tempDir, "TextImageDoc.docx");
+        CreateWordFileWithInlineImage(tempFile, TestImages.RenderTextPng("Invoice 2026 Total 12345"));
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true,
+            enableOcr: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate());
+
+        // Assert: 画像内の文字列がOCRで読み取られていること
+        // The text inside the image must be recognized by OCR.
+        Assert.Contains("Invoice", content);
+        Assert.Contains("12345", content);
+        Assert.DoesNotContain("[OCR Error", content);
+    }
+
+    [Fact]
+    public void Generate_ReportsUnsupportedImageFormat_InsteadOfFailing()
+    {
+        // Arrange: デコードできない画像（EMF相当のバイト列）を埋め込んだ .docx を作成する
+        // Create a .docx embedding an image that cannot be decoded (EMF-like bytes).
+        var tempFile = Path.Combine(_tempDir, "EmfImageDoc.docx");
+        CreateWordFileWithInlineImage(tempFile, new byte[] { 0x01, 0x00, 0x00, 0x00, 0x6C, 0x00, 0x00, 0x00 }, ImagePartType.Emf);
+
+        var settings = new AnalyzerSettings(
+            _tempDir,
+            "",
+            new HashSet<string> { "TestCode.cs", "IgnoreMe.txt" },
+            outputToFile: false,
+            omitCodeBlockTicks: true,
+            enableOcr: true);
+        var generator = new FileContentGenerator(settings);
+
+        // Act
+        var content = string.Concat(generator.Generate());
+
+        // Assert: 処理全体は失敗せず、未対応形式である旨が画像の位置に出力されること
+        // The run must not fail, and the unsupported format must be reported at the image position.
+        Assert.Contains("[OCR Skipped: unsupported image format]", content);
+        Assert.Contains("画像の後の段落", content);
     }
 
     [Fact]
@@ -598,15 +651,15 @@ public class FileContentGeneratorTests : IDisposable
     /// <summary>
     /// テスト用に、本文の段落から参照された埋め込み画像を含む .docx ファイルを生成します。
     /// </summary>
-    private static void CreateWordFileWithInlineImage(string path)
+    private static void CreateWordFileWithInlineImage(string path, byte[]? imageBytes = null, PartTypeInfo? imageType = null)
     {
         using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
         var mainPart = document.AddMainDocumentPart();
         mainPart.Document = new Document(new Body());
         var body = mainPart.Document.Body!;
 
-        var imagePart = mainPart.AddImagePart(ImagePartType.Png);
-        using (var imageStream = new MemoryStream(OnePixelPng))
+        var imagePart = mainPart.AddImagePart(imageType ?? ImagePartType.Png);
+        using (var imageStream = new MemoryStream(imageBytes ?? OnePixelPng))
         {
             imagePart.FeedData(imageStream);
         }
